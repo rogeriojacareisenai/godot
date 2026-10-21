@@ -1,6 +1,6 @@
 # Node3D
 # -> Camera3D
-#    -> Character3D
+# -> Character3D
       -> RunningPlace (fbx)
       
 extends Node3D
