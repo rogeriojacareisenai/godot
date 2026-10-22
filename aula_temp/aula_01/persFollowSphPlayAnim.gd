@@ -1,5 +1,4 @@
 
-
 extends Node3D
 
 var player: CharacterBody3D
