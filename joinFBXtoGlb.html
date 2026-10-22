@@ -1,0 +1,169 @@
+name=teste.html
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Mixamo Animation Merger & Renamer</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 40px; background: #121212; color: #fff; }
+        .card { background: #1e1e1e; padding: 25px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 400px; text-align: left; }
+        label, input { display: block; width: 100%; margin-bottom: 15px; box-sizing: border-box; }
+        input[type="file"], input[type="text"] { padding: 8px; font-size: 14px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; }
+        button { width: 100%; padding: 12px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        h2 { text-align: center; }
+        #status { text-align: center; color: #ff9800; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Unificador & Renomeador</h2>
+        
+        <label>1. Ficheiro Parado (FBX ou GLB):[cite: 1]</label>
+        <input type="file" id="fileIdle" accept=".fbx,.glb">
+        <label>Novo nome para esta animação:</label>
+        <input type="text" id="nameIdle" value="idle">
+
+        <label>2. Ficheiro A Andar (FBX ou GLB):[cite: 1]</label>
+        <input type="file" id="fileWalk" accept=".fbx,.glb">
+        <label>Novo nome para esta animação:</label>
+        <input type="text" id="nameWalk" value="walk">
+        
+        <button id="btnUnir" disabled>Unir, Renomear e Descarregar GLB</button>
+        <p id="status">Carrega os dois ficheiros...[cite: 1]</p>
+    </div>
+
+    <!-- Importa o Three.js e Loaders/Exporters -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const fileIdleInput = document.getElementById('fileIdle');
+        const fileWalkInput = document.getElementById('fileWalk');
+        const nameIdleInput = document.getElementById('nameIdle');
+        const nameWalkInput = document.getElementById('nameWalk');
+        const btnUnir = document.getElementById('btnUnir');
+        const statusText = document.getElementById('status');
+
+        let modeloIdle = null;
+        let clipIdle = null;
+        let clipWalk = null;
+
+        function carregarFicheiro(file, tipo, callback) {
+            const reader = new FileReader();
+            const extension = file.name.split('.').pop().toLowerCase();
+
+            reader.onload = function (event) {
+                const contents = event.target.result;
+
+                if (extension === 'glb' || extension === 'gltf') {
+                    const loader = new GLTFLoader();
+                    loader.parse(contents, '', (gltf) => {
+                        const clip = gltf.animations[0];
+                        callback(gltf.scene, clip);
+                    });
+                } else if (extension === 'fbx') {
+                    const loader = new FBXLoader();
+                    const object = loader.parse(contents, '');
+                    const clip = object.animations[0];
+                    callback(object, clip);
+                } else {
+                    statusText.innerText = "Erro: Formato não suportado![cite: 1]";
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        fileIdleInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            statusText.innerText = "A carregar Idle...[cite: 1]";
+            carregarFicheiro(file, 'idle', (scene, clip) => {
+                modeloIdle = scene;
+                clipIdle = clip;
+                verificarPronto();
+            });
+        });
+
+        fileWalkInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            statusText.innerText = "A carregar Walk...[cite: 1]";
+            carregarFicheiro(file, 'walk', (scene, clip) => {
+                clipWalk = clip;
+                verificarPronto();
+            });
+        });
+
+        function verificarPronto() {
+            if (modeloIdle && clipIdle && clipWalk) {
+                btnUnir.disabled = false;
+                statusText.innerText = "Pronto para unir e renomear![cite: 1]";
+            }
+        }
+
+        btnUnir.addEventListener('click', () => {
+            statusText.innerText = "A processar animações...[cite: 1]";
+
+            const nomeIdleDesejado = nameIdleInput.value || "idle";
+            const nomeWalkDesejado = nameWalkInput.value || "walk";
+
+            const tracksIdle = [];
+            clipIdle.tracks.forEach(track => {
+                const t = track.clone();
+                t.name = t.name.replace(clipIdle.name, nomeIdleDesejado);
+                tracksIdle.push(t);
+            });
+            const novoClipIdle = new THREE.AnimationClip(nomeIdleDesejado, clipIdle.duration, tracksIdle);
+
+            const duracaoIdle = clipIdle.duration;
+            const tracksWalk = [];
+            clipWalk.tracks.forEach(track => {
+                const novaTrack = track.clone();
+                for (let i = 0; i < novaTrack.times.length; i++) {
+                    novaTrack.times[i] += duracaoIdle;
+                }
+                novaTrack.name = novaTrack.name.replace(clipWalk.name, nomeWalkDesejado);
+                tracksWalk.push(novaTrack);
+            });
+            const duracaoTotal = duracaoIdle + clipWalk.duration;
+            const novoClipWalk = new THREE.AnimationClip(nomeWalkDesejado, duracaoTotal, tracksWalk);
+
+            modeloIdle.animations = [novoClipIdle, novoClipWalk];
+
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                modeloIdle,
+                function (gltfBuffer) {
+                    const blob = new Blob([gltfBuffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'personagem_mixamo_custom.glb';
+                    link.click();
+                    statusText.innerText = "Sucesso! Ficheiro descarregado.[cite: 1]";
+                },
+                function (error) {
+                    console.error(error);
+                    statusText.innerText = "Erro ao exportar.[cite: 1]";
+                },
+                { binary: true, animations: modeloIdle.animations }
+            );
+        });
+    </script>
+
+</body>
+</html>
