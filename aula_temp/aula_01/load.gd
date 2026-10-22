@@ -1,1 +1,251 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Mixamo Animation Merger & Renamer</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 40px; background: #121212; color: #fff; }
+        .card { background: #1e1e1e; padding: 25px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 400px; text-align: left; }
+        label, input { display: block; width: 100%; margin-bottom: 15px; box-sizing: border-box; }
+        input[type="file"], input[type="text"] { padding: 8px; font-size: 14px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; }
+        button { width: 100%; padding: 12px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        h2 { text-align: center; }
+        #status { text-align: center; color: #ff9800; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
 
+    <div class="card">
+        <h2>Unificador & Renomeador</h2>
+        
+        <label>1. Ficheiro Parado (FBX ou GLB):</label>
+        <input type="file" id="fileIdle" accept=".fbx,.glb">
+        <label>Novo nome para esta animação:</label>
+        <input type="text" id="nameIdle" value="idle">
+
+        <label>2. Ficheiro A Andar (FBX ou GLB):</label>
+        <input type="file" id="fileWalk" accept=".fbx,.glb">
+        <label>Novo nome para esta animação:</label>
+        <input type="text" id="nameWalk" value="walk">
+        
+        <button id="btnUnir" disabled>Unir, Renomear e Descarregar GLB</button>
+        <p id="status">Carrega os dois ficheiros...</p>
+    </div>
+
+    <!-- Importa o Three.js e Loaders/Exporters -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const fileIdleInput = document.getElementById('fileIdle');
+        const fileWalkInput = document.getElementById('fileWalk');
+        const nameIdleInput = document.getElementById('nameIdle');
+        const nameWalkInput = document.getElementById('nameWalk');
+        const btnUnir = document.getElementById('btnUnir');
+        const statusText = document.getElementById('status');
+
+        let modeloIdle = null;
+        let clipIdle = null;
+        let clipWalk = null;
+
+        function carregarFicheiro(file, tipo, callback) {
+            const reader = new FileReader();
+            const extension = file.name.split('.').pop().toLowerCase();
+
+            reader.onload = function (event) {
+                const contents = event.target.result;
+
+                if (extension === 'glb' || extension === 'gltf') {
+                    const loader = new GLTFLoader();
+                    loader.parse(contents, '', (gltf) => {
+                        const clip = gltf.animations[0];
+                        callback(gltf.scene, clip);
+                    });
+                } else if (extension === 'fbx') {
+                    const loader = new FBXLoader();
+                    const object = loader.parse(contents, '');
+                    const clip = object.animations[0];
+                    callback(object, clip);
+                } else {
+                    statusText.innerText = "Erro: Formato não suportado!";
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        fileIdleInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            statusText.innerText = "A carregar Idle...";
+            carregarFicheiro(file, 'idle', (scene, clip) => {
+                modeloIdle = scene;
+                clipIdle = clip;
+                verificarPronto();
+            });
+        });
+
+        fileWalkInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            statusText.innerText = "A carregar Walk...";
+            carregarFicheiro(file, 'walk', (scene, clip) => {
+                clipWalk = clip;
+                verificarPronto();
+            });
+        });
+
+        function verificarPronto() {
+            if (modeloIdle && clipIdle && clipWalk) {
+                btnUnir.disabled = false;
+                statusText.innerText = "Pronto para unir e renomear!";
+            }
+        }
+
+        // Função para remover quadros estáticos (sem movimento) no início e no fim
+        function limparQuadrosEstaticos(clip, tolerancia = 0.0001) {
+            if (!clip || !clip.tracks || clip.tracks.length === 0) return clip;
+
+            let minTime = clip.duration;
+            let maxTime = 0;
+
+            // Analisa todas as tracks para encontrar o primeiro e o último momento de alteração real
+            clip.tracks.forEach(track => {
+                const times = track.times;
+                const values = track.values;
+                const stride = values.length / times.length;
+
+                for (let i = 0; i < times.length; i++) {
+                    let isMoving = false;
+                    // Compara com o frame inicial ou final para ver se houve alteração
+                    if (i > 0) {
+                        for (let j = 0; j < stride; j++) {
+                            if (Math.abs(values[i * stride + j] - values[(i - 1) * stride + j]) > tolerancia) {
+                                isMoving = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        isMoving = true; // Mantém o primeiro por segurança base
+                    }
+
+                    if (isMoving) {
+                        if (times[i] < minTime) minTime = times[i];
+                        if (times[i] > maxTime) maxTime = times[i];
+                    }
+                }
+            });
+
+            // Se não encontrou variação relevante, retorna o clipe original
+            if (minTime >= maxTime) return clip;
+
+            // Adiciona uma margem de segurança mínima (ex: 1 frame ou 0.0s) se necessário, aqui cortamos direto
+            const novasTracks = [];
+            let novaDuracao = maxTime - minTime;
+
+            clip.tracks.forEach(track => {
+                const times = track.times;
+                const values = track.values;
+                const stride = values.length / times.length;
+
+                const novosTempos = [];
+                const novosValores = [];
+
+                for (let i = 0; i < times.length; i++) {
+                    if (times[i] >= minTime && times[i] <= maxTime) {
+                        novosTempos.push(times[i] - minTime);
+                        for (let j = 0; j < stride; j++) {
+                            novosValores.push(values[i * stride + j]);
+                        }
+                    }
+                }
+
+                if (novosTempos.length > 0) {
+                    let novaTrack;
+                    const trackName = track.name;
+                    if (track.constructor.name === 'VectorKeyframeTrack') {
+                        novaTrack = new THREE.VectorKeyframeTrack(trackName, novosTempos, novosValores);
+                    } else if (track.constructor.name === 'QuaternionKeyframeTrack') {
+                        novaTrack = new THREE.QuaternionKeyframeTrack(trackName, novosTempos, novosValores);
+                    } else {
+                        novaTrack = new THREE.KeyframeTrack(trackName, novosTempos, novosValores);
+                    }
+                    novasTracks.push(novaTrack);
+                }
+            });
+
+            return new THREE.AnimationClip(clip.name, novaDuracao, novasTracks);
+        }
+
+        btnUnir.addEventListener('click', () => {
+            statusText.innerText = "A limpar quadros estáticos e processar animações...";
+
+            const nomeIdleDesejado = nameIdleInput.value || "idle";
+            const nomeWalkDesejado = nameWalkInput.value || "walk";
+
+            // Limpa os quadros estáticos de ambas as animações antes de juntar
+            const clipIdleLimpo = limparQuadrosEstaticos(clipIdle);
+            const clipWalkLimpo = limparQuadrosEstaticos(clipWalk);
+
+            // 1. Processar Clip Idle Limpo
+            const tracksIdle = [];
+            clipIdleLimpo.tracks.forEach(track => {
+                const t = track.clone();
+                t.name = t.name.replace(clipIdle.name, nomeIdleDesejado);
+                tracksIdle.push(t);
+            });
+            const novoClipIdle = new THREE.AnimationClip(nomeIdleDesejado, clipIdleLimpo.duration, tracksIdle);
+
+            // 2. Processar Clip Walk Limpo (Deslocar os tempos pelo fim do clip idle limpo)
+            const duracaoIdle = clipIdleLimpo.duration;
+            const tracksWalk = [];
+            
+            clipWalkLimpo.tracks.forEach(track => {
+                const novaTrack = track.clone();
+                for (let i = 0; i < novaTrack.times.length; i++) {
+                    novaTrack.times[i] += duracaoIdle;
+                }
+                novaTrack.name = novaTrack.name.replace(clipWalk.name, nomeWalkDesejado);
+                tracksWalk.push(novaTrack);
+            });
+
+            const duracaoTotalWalk = duracaoIdle + clipWalkLimpo.duration;
+            const novoClipWalk = new THREE.AnimationClip(nomeWalkDesejado, duracaoTotalWalk, tracksWalk);
+
+            modeloIdle.animations = [novoClipIdle, novoClipWalk];
+
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                modeloIdle,
+                function (gltfBuffer) {
+                    const blob = new Blob([gltfBuffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'personagem_mixamo_custom.glb';
+                    link.click();
+                    statusText.innerText = "Sucesso! Ficheiro descarregado.";
+                },
+                function (error) {
+                    console.error(error);
+                    statusText.innerText = "Erro ao exportar.";
+                },
+                { binary: true, animations: modeloIdle.animations }
+            );
+        });
+    </script>
+
+</body>
+</html>
