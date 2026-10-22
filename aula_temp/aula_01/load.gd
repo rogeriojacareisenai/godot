@@ -3,106 +3,61 @@ extends Node3D
 @onready var ap: AnimationPlayer = find_child("AnimationPlayer", true, false)
 
 func _ready() -> void:
-	# 1. Cria o ambiente (Chão grande de 60x60 com colisão e iluminação)
 	criar_ambiente()
-	
-	# 2. Configura o AnimationPlayer e o loop das animações
 	if ap:
 		ap.active = true
-		
-		if ap.has_animation("walk"):
-			ap.get_animation("walk").loop_mode = Animation.LOOP_LINEAR
-		if ap.has_animation("idle"):
-			ap.get_animation("idle").loop_mode = Animation.LOOP_LINEAR
-			
-		# Inicia o jogo já no estado de descanso (idle)
+		for anim in ["walking", "idle"]:
+			if ap.has_animation(anim): ap.get_animation(anim).loop_mode = Animation.LOOP_LINEAR
 		tocar_animacao("idle")
-		mostrar_mensagem("Sucesso: Ambiente e AnimationPlayer prontos!", Color.GREEN)
+		mostrar_mensagem("Sucesso: Pronto!", Color.GREEN)
 	else:
-		mostrar_mensagem("ERRO: AnimationPlayer não encontrado na cena!", Color.RED)
+		mostrar_mensagem("ERRO: AnimationPlayer ausente!", Color.RED)
 
-func _process(delta: float) -> void:
-	if not ap:
-		return
+func _process(_delta: float) -> void:
+	if not ap: return
 	
-	var movendo: bool = false
-	var direcao := Vector3.ZERO
-
-	# Identificação individual de cada tecla de seta (Input map padrão)
-	if Input.is_action_pressed("ui_right"):
-		direcao.x += 1
-		movendo = true
-		
-	if Input.is_action_pressed("ui_left"):
-		direcao.x -= 1
-		movendo = true
-		
-	if Input.is_action_pressed("ui_down"):
-		direcao.z += 1
-		movendo = true
-		
-	if Input.is_action_pressed("ui_up"):
-		direcao.z -= 1
-		movendo = true
-
-	# Gerencia o movimento, a rotação e as animações
-	if movendo:
-		# Rotaciona o personagem instantaneamente para a direção da tecla pressionada
-		var angulo = atan2(direcao.x, direcao.z)
-		rotation.y = angulo
-		
-		# Ativa a animação de andar sem delay
-		tocar_animacao("walk")
+	var dir := Vector3(
+		Input.get_axis("ui_left", "ui_right"),
+		0,
+		Input.get_axis("ui_up", "ui_down")
+	)
+	
+	if dir != Vector3.ZERO:
+		rotation.y = atan2(dir.x, dir.z)
+		tocar_animacao("walking")
 	else:
-		# Se nenhuma seta estiver pressionada, ativa o idle
 		tocar_animacao("idle")
 
-# Função segura para troca rápida de animação sem atrasos
-func tocar_animacao(nome_animacao: String) -> void:
-	if ap and ap.has_animation(nome_animacao):
-		ap.active = true
-		
-		if ap.current_animation != nome_animacao:
-			# custom_blend = 0.0 corta qualquer atraso de transição
-			ap.play(nome_animacao,  false)
-			
-			# Remove o delay interno inicial da animação 'walk' pulando direto para o frame útil
-			if nome_animacao == "walk":
-				ap.seek(2.15, true) # Ajuste este valor (ex: 0.1 ou 0.2) se precisar refinar o corte
+func tocar_animacao(nome: String) -> void:
+	if ap and ap.has_animation(nome) and ap.current_animation != nome:
+		ap.play(nome)
+		if nome == "walking": ap.seek(0, true)
 
 func criar_ambiente() -> void:
-	# --- Criação do Chão (60x60 com Colisão) ---
-	var static_body = StaticBody3D.new()
-	static_body.name = "ChaoGrande"
+	var chao = StaticBody3D.new()
+	var mesh = MeshInstance3D.new()
+	mesh.mesh = PlaneMesh.new()
+	mesh.mesh.size = Vector2(1000, 1000)
 	
-	var mesh_instance = MeshInstance3D.new()
-	var plane_mesh = PlaneMesh.new()
-	plane_mesh.size = Vector2(60, 60)
-	mesh_instance.mesh = plane_mesh
+	var col = CollisionShape3D.new()
+	col.shape = BoxShape3D.new()
+	col.shape.size = Vector3(1000, 0.1, 1000)
 	
-	var collision_shape = CollisionShape3D.new()
-	var box_shape = BoxShape3D.new()
-	box_shape.size = Vector3(60, 0.1, 60)
-	collision_shape.shape = box_shape
+	chao.add_child(mesh)
+	chao.add_child(col)
+	add_child(chao)
 	
-	static_body.add_child(mesh_instance)
-	static_body.add_child(collision_shape)
-	add_child(static_body)
-	
-	# --- Criação da Luz Direcional (Sol) ---
 	var luz = DirectionalLight3D.new()
-	luz.name = "LuzSolar"
 	luz.light_energy = 1.5
 	luz.shadow_enabled = true
 	luz.rotation_degrees = Vector3(-45, 45, 0)
-	luz.position = Vector3(0, 15, 0)
 	add_child(luz)
 
 func mostrar_mensagem(texto: String, cor: Color) -> void:
-	var camada = CanvasLayer.new()
-	var rotulo = Label.new()
-	rotulo.text = texto
-	rotulo.position = Vector2(20, 20)
-	rotulo.add_theme_color_override("font_color", cor)
-	camada.add_child(rotulo)
-	add_child(camada)
+	var c = CanvasLayer.new()
+	var l = Label.new()
+	l.text = texto
+	l.position = Vector2(20, 20)
+	l.add_theme_color_override("font_color", cor)
+	c.add_child(l)
+	add_child(c)
