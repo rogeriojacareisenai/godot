@@ -10,8 +10,11 @@ var total_esferas: int = 2
 @export var animacao_idle: String = "idle"
 @export var animacao_walking: String = "walking"
 
-# Velocidade mínima para considerar o personagem em movimento.
 @export var limite_movimento: float = 0.1
+
+# Ajuste conforme a origem do modelo 3D.
+# Positivo eleva o modelo; negativo o aproxima do chão.
+@export var altura_personagem: float = 0.0
 
 var animation_player: AnimationPlayer
 var animacao_atual: String = ""
@@ -56,20 +59,15 @@ class PlayerMovel extends CharacterBody3D:
 		)
 
 		var direction: Vector3 = (
-			transform.basis
-			* Vector3(input_dir.x, 0, input_dir.y)
+			transform.basis * Vector3(input_dir.x, 0, input_dir.y)
 		).normalized()
 
 		if direction.length() > 0.0:
 			velocity.x = direction.x * SPEED
 			velocity.z = direction.z * SPEED
 		else:
-			velocity.x = move_toward(
-				velocity.x, 0.0, SPEED
-			)
-			velocity.z = move_toward(
-				velocity.z, 0.0, SPEED
-			)
+			velocity.x = move_toward(velocity.x, 0.0, SPEED)
+			velocity.z = move_toward(velocity.z, 0.0, SPEED)
 
 		move_and_slide()
 
@@ -89,8 +87,8 @@ func _ready() -> void:
 
 	_localizar_animation_player()
 
-	# Começa com a animação de repouso.
-	executar_animacao(animacao_idle)
+	if is_instance_valid(animation_player):
+		executar_animacao(animacao_idle)
 
 	print("================================")
 	print("JOGO INICIADO")
@@ -101,29 +99,31 @@ func _ready() -> void:
 
 
 # =========================================================
-# ACOMPANHAMENTO E ANIMAÇÃO AUTOMÁTICA
+# SINCRONIZAÇÃO DO PERSONAGEM ANIMADO
 # =========================================================
 
 func _process(_delta: float) -> void:
 	if not is_instance_valid(player):
 		return
 
-	# O personagem externo acompanha o jogador.
 	if is_instance_valid(outro_character):
-		outro_character.global_position = player.global_position
+		# Sincroniza a posição horizontal.
+		# A altura configurável permite ajustar o modelo.
+		var posicao := player.global_position
+		posicao.y += altura_personagem
 
-	# Mede somente a velocidade horizontal.
+		outro_character.global_position = posicao
+
+	# Usa a velocidade horizontal para decidir a animação.
 	var velocidade_horizontal := Vector2(
 		player.velocity.x,
 		player.velocity.z
 	).length()
 
 	if velocidade_horizontal > limite_movimento:
-		# Jogador em movimento.
 		if animacao_atual != animacao_walking:
 			executar_animacao(animacao_walking)
 	else:
-		# Jogador parado.
 		if animacao_atual != animacao_idle:
 			executar_animacao(animacao_idle)
 
@@ -136,9 +136,7 @@ func _localizar_animation_player() -> void:
 	animation_player = null
 
 	if not is_instance_valid(outro_character):
-		push_warning(
-			"Defina outro_character no Inspector."
-		)
+		push_warning("Defina outro_character no Inspector.")
 		return
 
 	print(
@@ -146,9 +144,7 @@ func _localizar_animation_player() -> void:
 		outro_character.get_path()
 	)
 
-	animation_player = _buscar_animation_player(
-		outro_character
-	)
+	animation_player = _buscar_animation_player(outro_character)
 
 	if animation_player == null:
 		push_warning("AnimationPlayer não encontrado.")
@@ -156,15 +152,8 @@ func _localizar_animation_player() -> void:
 		_imprimir_arvore(outro_character)
 		return
 
-	print(
-		"AnimationPlayer localizado: ",
-		animation_player.get_path()
-	)
-
-	print(
-		"Animações disponíveis: ",
-		animation_player.get_animation_list()
-	)
+	print("AnimationPlayer localizado: ", animation_player.get_path())
+	print("Animações disponíveis: ", animation_player.get_animation_list())
 
 
 func _buscar_animation_player(no: Node) -> AnimationPlayer:
@@ -192,22 +181,15 @@ func executar_animacao(nome_animacao: String) -> void:
 		return
 
 	if not animation_player.is_inside_tree():
-		push_warning(
-			"AnimationPlayer não está na árvore de cena."
-		)
+		push_warning("AnimationPlayer não está na árvore de cena.")
 		return
 
 	if not animation_player.has_animation(nome_animacao):
-		push_warning(
-			"Animação não encontrada: " + nome_animacao
-		)
-		print(
-			"Animações disponíveis: ",
-			animation_player.get_animation_list()
-		)
+		push_warning("Animação não encontrada: " + nome_animacao)
+		print("Animações disponíveis: ", animation_player.get_animation_list())
 		return
 
-	# Não reinicia uma animação que já está sendo executada.
+	# Evita reiniciar a mesma animação a cada quadro.
 	if (
 		animation_player.current_animation == nome_animacao
 		and animation_player.is_playing()
@@ -238,10 +220,7 @@ func _imprimir_arvore(no: Node, nivel: int = 0) -> void:
 # COLETA DE ESFERAS
 # =========================================================
 
-func _on_esfera_coletada(
-	body: Node3D,
-	esfera: Area3D
-) -> void:
+func _on_esfera_coletada(body: Node3D, esfera: Area3D) -> void:
 	if body == player:
 		score += 1
 
@@ -255,13 +234,11 @@ func _on_esfera_coletada(
 		esfera.queue_free()
 
 		if score >= total_esferas:
-			print(
-				"Parabéns! Você coletou todas as esferas!"
-			)
+			print("Parabéns! Você coletou todas as esferas!")
 
 
 # =========================================================
-# CRIAÇÃO DO AMBIENTE
+# AMBIENTE
 # =========================================================
 
 func _criar_ambiente() -> void:
@@ -349,7 +326,6 @@ func _criar_esferas_coletaveis() -> void:
 
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color(1, 0.84, 0)
-
 	sphere_mesh.material = material
 
 	for posicao in posicoes:
@@ -378,7 +354,7 @@ func _criar_esferas_coletaveis() -> void:
 
 
 # =========================================================
-# CRIAÇÃO DO JOGADOR
+# JOGADOR INVISÍVEL
 # =========================================================
 
 func _criar_jogador() -> void:
@@ -386,26 +362,26 @@ func _criar_jogador() -> void:
 	player.name = "Jogador"
 	player.position = Vector3(0, 1, 6)
 
+	# Malha invisível: mantém o nó, mas não desenha a esfera.
 	var mesh_instance := MeshInstance3D.new()
-	var sphere_mesh := SphereMesh.new()
+	mesh_instance.name = "EsferaVisual"
 
+	var sphere_mesh := SphereMesh.new()
 	sphere_mesh.radius = 0.5
 	sphere_mesh.height = 1.0
 
 	mesh_instance.mesh = sphere_mesh
+	mesh_instance.visible = false
+	player.add_child(mesh_instance)
 
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.1, 0.5, 0.9)
-
-	mesh_instance.material_override = material
-
+	# A colisão continua ativa.
 	var collision_shape := CollisionShape3D.new()
-	var sphere_shape := SphereShape3D.new()
+	collision_shape.name = "ColisaoJogador"
 
+	var sphere_shape := SphereShape3D.new()
 	sphere_shape.radius = 0.5
 	collision_shape.shape = sphere_shape
 
-	player.add_child(mesh_instance)
 	player.add_child(collision_shape)
 
 	add_child(player)
