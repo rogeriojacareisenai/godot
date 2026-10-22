@@ -74,19 +74,27 @@ func _ready() -> void:
 
 
 # =========================================================
-# SINCRONIZAÇÃO E ANIMAÇÃO
+# SINCRONIZAÇÃO, ROTAÇÃO E ANIMAÇÃO
 # =========================================================
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not is_instance_valid(player):
 		return
 
 	if is_instance_valid(outro_character):
+		# Sincroniza a posição
 		var posicao := player.global_position
 		posicao.y += altura_personagem
 		outro_character.global_position = posicao
 
-	var velocidade_horizontal := Vector2(player.velocity.x, player.velocity.z).length()
-	var nova_animacao = animacao_walking if velocidade_horizontal > limite_movimento else animacao_idle
+		# Sincroniza a rotação corrigida
+		var velocidade_horizontal := Vector2(player.velocity.x, player.velocity.z)
+		if velocidade_horizontal.length() > limite_movimento:
+			var angulo_alvo := atan2(player.velocity.x, player.velocity.z)
+			outro_character.rotation.y = lerp_angle(outro_character.rotation.y, angulo_alvo, delta * 15.0)
+
+	# Usa a velocidade horizontal para decidir a animação
+	var velocidade_horizontal_len := Vector2(player.velocity.x, player.velocity.z).length()
+	var nova_animacao = animacao_walking if velocidade_horizontal_len > limite_movimento else animacao_idle
 
 	if animacao_atual != nova_animacao:
 		executar_animacao(nova_animacao)
@@ -233,7 +241,7 @@ func _criar_esferas_coletaveis() -> void:
 func _criar_jogador() -> void:
 	player = PlayerMovel.new()
 	player.name = "Jogador"
-	player.position = Vector3(0, 1, 6)
+	player.position = Vector3(0, 1, -2)
 
 	var mesh_instance := MeshInstance3D.new()
 	var sphere_mesh := SphereMesh.new()
