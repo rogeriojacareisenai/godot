@@ -8,48 +8,10 @@ var score: int = 0
 @export var animacao_idle: String = "idle"
 @export var animacao_walking: String = "walking"
 @export var limite_movimento: float = 0.1
-@export var altura_personagem: float = 0.0
 
 var animation_player: AnimationPlayer
 var animacao_atual: String = ""
-
-
-# =========================================================
-# CLASSE DE MOVIMENTO DO JOGADOR
-# =========================================================
-class PlayerMovel extends CharacterBody3D:
-	const SPEED: float = 7.0
-	const JUMP_VELOCITY: float = 4.5
-	var gravity: float = 9.8
-	var camera: Camera3D
-
-	func _ready() -> void:
-		gravity = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
-		
-		camera = Camera3D.new()
-		camera.name = "CameraSeguidora"
-		camera.position = Vector3(0, 2.5, 4.0)
-		camera.rotation_degrees = Vector3(-20, 0, 0)
-		add_child(camera)
-
-	func _physics_process(delta: float) -> void:
-		if not is_on_floor():
-			velocity.y -= gravity * delta
-
-		if Input.is_action_just_pressed("ui_accept") and is_on_floor():
-			velocity.y = JUMP_VELOCITY
-
-		var input_dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
-		var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-
-		if direction:
-			velocity.x = direction.x * SPEED
-			velocity.z = direction.z * SPEED
-		else:
-			velocity.x = move_toward(velocity.x, 0.0, SPEED)
-			velocity.z = move_toward(velocity.z, 0.0, SPEED)
-
-		move_and_slide()
+var camera: Camera3D
 
 
 # =========================================================
@@ -60,7 +22,7 @@ func _ready() -> void:
 	_criar_plano()
 	_criar_cubos_solidos()
 	_criar_esferas_coletaveis()
-	_criar_jogador()
+	_configurar_jogador()
 
 	await get_tree().process_frame
 	_localizar_animation_player()
@@ -74,41 +36,61 @@ func _ready() -> void:
 
 
 # =========================================================
-# SINCRONIZAÇÃO, ROTAÇÃO E ANIMAÇÃO
+# MOVIMENTO, ROTAÇÃO E ANIMAÇÃO
 # =========================================================
-func _process(delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if not is_instance_valid(player):
 		return
 
-	if is_instance_valid(outro_character):
-		# Sincroniza a posição
-		var posicao := player.global_position
-		posicao.y += altura_personagem
-		outro_character.global_position = posicao
+	# --- Gravidade e Movimento do Jogador ---
+	const SPEED: float = 7.0
+	const JUMP_VELOCITY: float = 4.5
+	var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
-		# Sincroniza a rotação corrigida
-		var velocidade_horizontal := Vector2(player.velocity.x, player.velocity.z)
-		if velocidade_horizontal.length() > limite_movimento:
-			var angulo_alvo := atan2(player.velocity.x, player.velocity.z)
-			outro_character.rotation.y = lerp_angle(outro_character.rotation.y, angulo_alvo, delta * 15.0)
+	if not player.is_on_floor():
+		player.velocity.y -= gravity * delta
 
-	# Usa a velocidade horizontal para decidir a animação
-	var velocidade_horizontal_len := Vector2(player.velocity.x, player.velocity.z).length()
-	var nova_animacao = animacao_walking if velocidade_horizontal_len > limite_movimento else animacao_idle
+	if Input.is_action_just_pressed("ui_accept") and player.is_on_floor():
+		player.velocity.y = JUMP_VELOCITY
+
+	# Pega o input baseado na câmera ou de forma global para não bugar a direção
+	var input_dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	var direction := Vector3(input_dir.x, 0, input_dir.y).normalized()
+
+	if direction:
+		player.velocity.x = direction.x * SPEED
+		player.velocity.z = direction.z * SPEED
+	else:
+		player.velocity.x = move_toward(player.velocity.x, 0.0, SPEED)
+		player.velocity.z = move_toward(player.velocity.z, 0.0, SPEED)
+
+	player.move_and_slide()
+
+	# --- Rotação baseada apenas na direção do movimento (Sem girar o cenário) ---
+	var velocidade_horizontal := Vector2(player.velocity.x, player.velocity.z)
+	if velocidade_horizontal.length() > limite_movimento:
+		var angulo_alvo := atan2(player.velocity.x, player.velocity.z)
+		# Aplica a rotação de forma suave apenas no personagem
+		player.rotation.y = lerp_angle(player.rotation.y, angulo_alvo, delta * 15.0)
+
+	# --- Gerenciamento de Animações ---
+	var nova_animacao = animacao_walking if velocidade_horizontal.length() > limite_movimento else animacao_idle
 
 	if animacao_atual != nova_animacao:
 		executar_animacao(nova_animacao)
 
 
+# =========================================================
+# LOCALIZAÇÃO E ANIMAÇÃO
+# =========================================================
 func _localizar_animation_player() -> void:
-	if not is_instance_valid(outro_character):
-		push_warning("Defina outro_character no Inspector.")
+	if not is_instance_valid(player):
 		return
 
-	animation_player = _buscar_animation_player(outro_character)
+	animation_player = _buscar_animation_player(player)
 	if not animation_player:
-		push_warning("AnimationPlayer não encontrado.")
-		_imprimir_arvore(outro_character)
+		push_warning("AnimationPlayer não encontrado dentro do personagem.")
+		_imprimir_arvore(player)
 	else:
 		print("AnimationPlayer localizado: ", animation_player.get_path())
 
@@ -238,23 +220,49 @@ func _criar_esferas_coletaveis() -> void:
 		add_child(area)
 
 
-func _criar_jogador() -> void:
-	player = PlayerMovel.new()
-	player.name = "Jogador"
+func _configurar_jogador() -> void:
+	if is_instance_valid(outro_character):
+		player = outro_character
+		
+		var tem_colisao := false
+		for filho in player.get_children():
+			if filho is CollisionShape3D:
+				tem_colisao = true
+				break
+		
+		if not tem_colisao:
+			var collision_shape := CollisionShape3D.new()
+			var capsule_shape := CapsuleShape3D.new()
+			capsule_shape.radius = 0.4
+			capsule_shape.height = 1.8
+			collision_shape.shape = capsule_shape
+			collision_shape.position = Vector3(0, 0.9, 0)
+			player.add_child(collision_shape)
+	else:
+		player = CharacterBody3D.new()
+		player.name = "Jogador"
+		
+		var collision_shape := CollisionShape3D.new()
+		var capsule_shape := CapsuleShape3D.new()
+		collision_shape.shape = capsule_shape
+		player.add_child(collision_shape)
+		
+		add_child(player)
+
 	player.position = Vector3(0, 1, -2)
 
-	var mesh_instance := MeshInstance3D.new()
-	var sphere_mesh := SphereMesh.new()
-	sphere_mesh.radius = 0.5
-	sphere_mesh.height = 1.0
-	mesh_instance.mesh = sphere_mesh
-	mesh_instance.visible = false
-	player.add_child(mesh_instance)
+	# Criação da Câmera fora do Player (ou tratada de forma que não herde rotação indesejada do eixo global)
+	# Colocamos a câmera diretamente na raiz (Node3D) para ela ter visão isométrica/estática do cenário,
+	# ou acompanhando a posição do player manualmente no _process se preferir que ela siga.
+	camera = Camera3D.new()
+	camera.name = "CameraCenario"
+	camera.position = Vector3(0, 5.5, 8.0)
+	camera.rotation_degrees = Vector3(-30, 0, 0)
+	add_child(camera)
 
-	var collision_shape := CollisionShape3D.new()
-	var sphere_shape := SphereShape3D.new()
-	sphere_shape.radius = 0.5
-	collision_shape.shape = sphere_shape
-	player.add_child(collision_shape)
 
-	add_child(player)
+# Faz a câmera seguir a posição do player suavemente sem girar junto com ele
+func _process(delta: float) -> void:
+	if is_instance_valid(player) and is_instance_valid(camera):
+		var alvo_pos = player.global_position + Vector3(0, 2.5, 6.0)
+		camera.global_position = camera.global_position.lerp(alvo_pos, delta * 8.0)
