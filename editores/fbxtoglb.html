@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Conversor para GLB & Renomeador de Animação</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 40px; background: #121212; color: #fff; }
+        .card { background: #1e1e1e; padding: 25px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 400px; text-align: left; }
+        label, input { display: block; width: 100%; margin-bottom: 15px; box-sizing: border-box; }
+        input[type="file"], input[type="text"] { padding: 8px; font-size: 14px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; }
+        button { width: 100%; padding: 12px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        h2 { text-align: center; }
+        #status { text-align: center; color: #ff9800; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Conversor GLB & Animação</h2>
+        
+        <label>Selecione o Ficheiro (FBX, GLTF ou GLB):[cite: 1]</label>
+        <input type="file" id="fileInput" accept=".fbx,.gltf,.glb">
+
+        <label>Novo nome para a animação:</label>
+        <input type="text" id="animationName" value="animacao">
+
+        <label>Nome do ficheiro de saída (sem extensão):</label>
+        <input type="text" id="outputName" value="modelo_convertido">
+        
+        <button id="btnConverter" disabled>Converter e Descarregar GLB</button>
+        <p id="status">Aguardando ficheiro...</p>
+    </div>
+
+    <!-- Importa o Three.js e Loaders/Exporters -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const fileInput = document.getElementById('fileInput');
+        const animationNameInput = document.getElementById('animationName');
+        const outputNameInput = document.getElementById('outputName');
+        const btnConverter = document.getElementById('btnConverter');
+        const statusText = document.getElementById('status');
+
+        let modeloCarregado = null;
+        let animacoesOriginais = [];
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            statusText.innerText = "A carregar ficheiro...";
+            btnConverter.disabled = true;
+
+            const reader = new FileReader();
+            const extension = file.name.split('.').pop().toLowerCase();
+
+            reader.onload = function (event) {
+                const contents = event.target.result;
+
+                if (extension === 'glb' || extension === 'gltf') {
+                    const loader = new GLTFLoader();
+                    loader.parse(contents, '', (gltf) => {
+                        modeloCarregado = gltf.scene;
+                        animacoesOriginais = gltf.animations || [];
+                        prontoParaConverter();
+                    }, (err) => {
+                        statusText.innerText = "Erro ao carregar o ficheiro GLTF/GLB.";
+                    });
+                } else if (extension === 'fbx') {
+                    const loader = new FBXLoader();
+                    try {
+                        const object = loader.parse(contents, '');
+                        modeloCarregado = object;
+                        animacoesOriginais = object.animations || [];
+                        prontoParaConverter();
+                    } catch (err) {
+                        console.error(err);
+                        statusText.innerText = "Erro ao carregar o ficheiro FBX.";
+                    }
+                } else {
+                    statusText.innerText = "Erro: Formato não suportado![cite: 1]";
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+
+        function prontoParaConverter() {
+            btnConverter.disabled = false;
+            statusText.innerText = "Ficheiro carregado com sucesso! Pronto para converter.";
+        }
+
+        btnConverter.addEventListener('click', () => {
+            if (!modeloCarregado) return;
+
+            statusText.innerText = "A processar e exportar para GLB...";
+
+            const novoNomeAnim = animationNameInput.value.trim() || "animacao";
+            const animacoesProcessadas = [];
+
+            // Renomeia a primeira animação encontrada (caso exista)
+            if (animacoesOriginais.length > 0) {
+                const clipOriginal = animacoesOriginais[0];
+                const tracksRenomeadas = [];
+
+                clipOriginal.tracks.forEach(track => {
+                    const t = track.clone();
+                    // Atualiza o nome da pista para corresponder ao novo nome do clipe
+                    t.name = t.name.replace(clipOriginal.name, novoNomeAnim);
+                    tracksRenomeadas.push(t);
+                });
+
+                const novoClip = new THREE.AnimationClip(novoNomeAnim, clipOriginal.duration, tracksRenomeadas);
+                animacoesProcessadas.push(novoClip);
+            }
+
+            modeloCarregado.animations = animacoesProcessadas;
+
+            const exporter = new GLTFExporter();
+            const options = {
+                binary: true,
+                animations: modeloCarregado.animations
+            };
+
+            exporter.parse(
+                modeloCarregado,
+                function (gltfBuffer) {
+                    const blob = new Blob([gltfBuffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    const nomeFinal = (outputNameInput.value.trim() || "modelo_convertido") + ".glb";
+                    
+                    link.href = URL.createObjectURL(blob);
+                    link.download = nomeFinal;
+                    link.click();
+                    
+                    statusText.innerText = `Sucesso! Ficheiro "${nomeFinal}" descarregado.`;
+                },
+                function (error) {
+                    console.error(error);
+                    statusText.innerText = "Erro ao exportar o ficheiro.[cite: 1]";
+                },
+                options
+            );
+        });
+    </script>
+
+</body>
+</html>

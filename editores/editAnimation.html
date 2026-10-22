@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor e Concatenador de Animações 3D (Estilo Flash)</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #18181c; color: #eee; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+        
+        #top-bar { padding: 10px 20px; background: #222228; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #333; z-index: 10; flex-wrap: wrap; }
+        .btn { padding: 8px 14px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; transition: 0.2s; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { background: #444; cursor: not-allowed; opacity: 0.6; }
+        .btn-danger { background: #ef4444; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-success { background: #10b981; }
+        .btn-success:hover { background: #059669; }
+        .btn-purple { background: #8b5cf6; }
+        .btn-purple:hover { background: #7c3aed; }
+
+        #main-container { flex: 1; display: flex; position: relative; overflow: hidden; }
+        #canvas3d { width: 100%; height: 100%; display: block; }
+
+        /* Painel Lateral */
+        #sidebar { width: 360px; background: #1f1f24; padding: 15px; border-left: 1px solid #333; display: flex; flex-direction: column; gap: 12px; z-index: 5; overflow-y: auto; }
+        .panel-group { background: #2a2a30; padding: 12px; border-radius: 6px; }
+        .panel-group h3 { font-size: 13px; color: #aaa; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        .anim-item { background: #18181c; padding: 8px; border-radius: 4px; margin-bottom: 6px; border-left: 4px solid #3b82f6; display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
+        .anim-item input[type="text"] { background: #111; border: 1px solid #444; color: #fff; padding: 3px 6px; border-radius: 3px; font-size: 12px; width: 130px; }
+        .anim-item input[type="text"]:focus { border-color: #3b82f6; outline: none; }
+        .anim-item-controls { display: flex; gap: 4px; }
+        .btn-mini { padding: 2px 6px; font-size: 10px; border-radius: 3px; }
+
+        /* Barra Inferior (Linha do Tempo Estilo Flash) */
+        #timeline-container { height: 160px; background: #151518; border-top: 2px solid #333; display: flex; flex-direction: column; padding: 10px 20px; z-index: 10; }
+        #timeline-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        
+        #timeline-wrapper { position: relative; width: 100%; height: 80px; background: #0d0d0f; border-radius: 4px; overflow: hidden; border: 1px solid #333; }
+        #timeline-canvas { width: 100%; height: 100%; cursor: pointer; display: block; }
+
+        .time-display { font-family: monospace; font-size: 14px; color: #38bdf8; font-weight: bold; }
+        .shortcut-tip { font-size: 11px; color: #888; margin-top: 4px; }
+        
+        #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); display: none; justify-content: center; align-items: center; z-index: 100; flex-direction: column; gap: 10px; }
+        .spinner { border: 4px solid #333; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div id="loading-text" style="color: #fff; font-weight: bold;">Processando arquivo...</div>
+    </div>
+
+    <!-- Topo: Importação Sequencial e Exportação -->
+    <div id="top-bar">
+        <label style="margin:0; cursor:pointer;" class="btn">
+            📂 1. Carregar Modelo Base
+            <input type="file" id="baseFileInput" accept=".fbx,.glb,.gltf" style="display:none;">
+        </label>
+        
+        <label style="margin:0; cursor:pointer;" class="btn btn-purple" id="lblAddAnim" style="opacity:0.5;">
+            ➕ 2. Adicionar Animação em Sequência
+            <input type="file" id="appendFileInput" accept=".fbx,.glb,.gltf" style="display:none;" disabled>
+        </label>
+
+        <span id="file-info" style="font-size:13px; color:#aaa; margin-left: 10px;">Nenhum modelo carregado</span>
+        <div style="flex:1;"></div>
+        <button id="btnExport" class="btn btn-success" disabled>💾 Exportar GLB Concatenado</button>
+    </div>
+
+    <div id="main-container">
+        <!-- Visualizador 3D -->
+        <canvas id="canvas3d"></canvas>
+
+        <!-- Gerenciador de Animações Encadeadas -->
+        <div id="sidebar">
+            <div class="panel-group">
+                <h3>Sequência de Animações</h3>
+                <div id="animListContainer">
+                    <p style="font-size:12px; color:#666;">Carregue um modelo para visualizar as faixas.</p>
+                </div>
+            </div>
+
+            <div class="panel-group">
+                <h3>Atalhos e Dicas</h3>
+                <p class="shortcut-tip"><b>Espaço:</b> Reproduzir / Pausar</p>
+                <p class="shortcut-tip"><b>Clique/Arrasto na Timeline:</b> Sincroniza a posição 3D exata do modelo.</p>
+                <p class="shortcut-tip"><b>Nomes:</b> Edite o campo de texto de cada animação para renomeá-la no GLB exportado.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Linha do Tempo Estilo Flash -->
+    <div id="timeline-container">
+        <div id="timeline-controls">
+            <div style="display:flex; align-items:center; gap: 12px;">
+                <button id="btnPlay" class="btn" style="padding:4px 12px;" disabled>▶ Play</button>
+                <span id="timeText" class="time-display">0.00s / 0.00s</span>
+            </div>
+            <span style="font-size:12px; color:#aaa;">Linha do tempo multitravas (Blocos indicam cada animação concatenada)</span>
+        </div>
+        <div id="timeline-wrapper">
+            <canvas id="timeline-canvas"></canvas>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        // Interface
+        const baseFileInput = document.getElementById('baseFileInput');
+        const appendFileInput = document.getElementById('appendFileInput');
+        const fileInfo = document.getElementById('file-info');
+        const animListContainer = document.getElementById('animListContainer');
+        const btnPlay = document.getElementById('btnPlay');
+        const btnExport = document.getElementById('btnExport');
+        const timeText = document.getElementById('timeText');
+        const timelineCanvas = document.getElementById('timeline-canvas');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const ctxTimeline = timelineCanvas.getContext('2d');
+
+        // Variáveis 3D
+        let scene, camera, renderer, controls, mixer, clock;
+        let currentModel = null;
+        let concatenatedClip = null;
+        let currentAction = null;
+        
+        // Estrutura das Animações em Sequência
+        // { name, duration, clip, color }
+        let animationSequence = [];
+        const COLOR_PALETTE = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4', '#84cc16'];
+
+        let isPlaying = false;
+        let currentTime = 0;
+        let totalDuration = 0;
+        let isScrubbing = false;
+
+        init3D();
+
+        function init3D() {
+            const container = document.getElementById('canvas3d');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x18181c);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 1.5, 3);
+
+            renderer = new THREE.WebGLRenderer({ canvas: container, antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1, 0);
+            controls.update();
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight.position.set(3, 10, 5);
+            scene.add(dirLight);
+
+            const grid = new THREE.GridHelper(10, 20, 0x444444, 0x222222);
+            scene.add(grid);
+
+            clock = new THREE.Clock();
+            animate();
+
+            window.addEventListener('resize', onWindowResize);
+            setupTimelineEvents();
+            setTimeout(resizeTimelineCanvas, 100);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (mixer && isPlaying && totalDuration > 0) {
+                currentTime += delta;
+                if (currentTime >= totalDuration) {
+                    currentTime = 0; // Loop
+                }
+                mixer.setTime(currentTime);
+                updateTimelineDisplay();
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('canvas3d');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            resizeTimelineCanvas();
+        }
+
+        // --- Carregamento de Arquivos ---
+        baseFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            loadBaseModel(file);
+        });
+
+        appendFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            appendAnimationFromFile(file);
+        });
+
+        function loadBaseModel(file) {
+            showLoading("Carregando modelo base...");
+            const reader = new FileReader();
+            const ext = file.name.split('.').pop().toLowerCase();
+
+            reader.onload = function (event) {
+                const contents = event.target.result;
+                if (currentModel) scene.remove(currentModel);
+                if (mixer) mixer.stopAllAction();
+
+                animationSequence = [];
+
+                parseModelData(contents, ext, (model, animations) => {
+                    currentModel = model;
+                    scene.add(currentModel);
+
+                    // Ajustar Câmera
+                    const box = new THREE.Box3().setFromObject(currentModel);
+                    const size = box.getSize(new THREE.Vector3());
+                    const center = box.getCenter(new THREE.Vector3());
+                    currentModel.position.sub(center);
+                    currentModel.position.y += size.y / 2;
+                    camera.position.set(0, size.y / 2, Math.max(size.x, size.y, size.z) * 2.5);
+                    controls.target.set(0, size.y / 2, 0);
+                    controls.update();
+
+                    mixer = new THREE.AnimationMixer(currentModel);
+
+                    // Adicionar animações nativas se houver
+                    if (animations && animations.length > 0) {
+                        animations.forEach((clip, idx) => {
+                            animationSequence.push({
+                                name: clip.name && clip.name !== 'default' ? clip.name : `Animação ${idx + 1}`,
+                                clip: clip.clone(),
+                                color: COLOR_PALETTE[animationSequence.length % COLOR_PALETTE.length]
+                            });
+                        });
+                    }
+
+                    fileInfo.innerText = file.name;
+                    appendFileInput.disabled = false;
+                    document.getElementById('lblAddAnim').style.opacity = '1';
+
+                    rebuildMasterAnimation();
+                    hideLoading();
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function appendAnimationFromFile(file) {
+            if (!currentModel) return;
+            showLoading("Importando nova animação...");
+            const reader = new FileReader();
+            const ext = file.name.split('.').pop().toLowerCase();
+
+            reader.onload = function (event) {
+                parseModelData(event.target.result, ext, (model, animations) => {
+                    if (!animations || animations.length === 0) {
+                        alert("Nenhuma animação encontrada no arquivo selecionado.");
+                        hideLoading();
+                        return;
+                    }
+
+                    animations.forEach((clip, idx) => {
+                        const cleanName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                        animationSequence.push({
+                            name: clip.name && clip.name !== 'default' ? clip.name : cleanName,
+                            clip: clip.clone(),
+                            color: COLOR_PALETTE[animationSequence.length % COLOR_PALETTE.length]
+                        });
+                    });
+
+                    rebuildMasterAnimation();
+                    hideLoading();
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function parseModelData(contents, ext, callback) {
+            try {
+                if (ext === 'glb' || ext === 'gltf') {
+                    const loader = new GLTFLoader();
+                    loader.parse(contents, '', (gltf) => callback(gltf.scene, gltf.animations), err => {
+                        alert("Erro ao ler GLTF/GLB");
+                        hideLoading();
+                    });
+                } else if (ext === 'fbx') {
+                    const loader = new FBXLoader();
+                    const obj = loader.parse(contents, '');
+                    callback(obj, obj.animations);
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Falha ao processar arquivo 3D.");
+                hideLoading();
+            }
+        }
+
+        // --- Concatenação de Animações Sequenciais ---
+        function rebuildMasterAnimation() {
+            if (!mixer) return;
+            mixer.stopAllAction();
+
+            if (animationSequence.length === 0) {
+                totalDuration = 0;
+                currentTime = 0;
+                btnPlay.disabled = true;
+                btnExport.disabled = true;
+                renderSidebarList();
+                drawTimeline();
+                return;
+            }
+
+            // Unir todos os clips em uma única linha do tempo contínua
+            const concatenatedTracks = [];
+            let timeOffset = 0;
+
+            const trackMap = new Map();
+
+            animationSequence.forEach((item) => {
+                const clip = item.clip;
+                
+                clip.tracks.forEach(track => {
+                    if (!trackMap.has(track.name)) {
+                        trackMap.set(track.name, {
+                            type: track.ValueTypeName,
+                            times: [],
+                            values: []
+                        });
+                    }
+
+                    const trackData = trackMap.get(track.name);
+                    const times = track.times;
+                    const values = track.values;
+
+                    for (let i = 0; i < times.length; i++) {
+                        trackData.times.push(times[i] + timeOffset);
+                    }
+                    for (let j = 0; j < values.length; j++) {
+                        trackData.values.push(values[j]);
+                    }
+                });
+
+                timeOffset += clip.duration;
+            });
+
+            totalDuration = timeOffset;
+
+            trackMap.forEach((data, trackName) => {
+                let trackClass;
+                if (data.type === 'quaternion') trackClass = THREE.QuaternionKeyframeTrack;
+                else if (data.type === 'vector') trackClass = THREE.VectorKeyframeTrack;
+                else trackClass = THREE.NumberKeyframeTrack;
+
+                const newTrack = new trackClass(trackName, data.times, data.values);
+                concatenatedTracks.push(newTrack);
+            });
+
+            // Usando o nome da primeira animação ou um nome padrão geral para o clipe concatenado principal
+            const masterName = animationSequence.length > 0 ? animationSequence[0].name : 'Animacao_Concatenada';
+            concatenatedClip = new THREE.AnimationClip(masterName, totalDuration, concatenatedTracks);
+
+            currentAction = mixer.clipAction(concatenatedClip);
+            currentAction.play();
+            
+            currentTime = 0;
+            mixer.setTime(0);
+
+            btnPlay.disabled = false;
+            btnExport.disabled = false;
+            isPlaying = true;
+            btnPlay.innerText = "⏸ Pause";
+
+            renderSidebarList();
+            drawTimeline();
+        }
+
+        // --- Renderização do Painel Lateral com Nomes Editáveis ---
+        function renderSidebarList() {
+            animListContainer.innerHTML = '';
+            
+            if (animationSequence.length === 0) {
+                animListContainer.innerHTML = `<p style="font-size:12px; color:#666;">Nenhuma animação na lista.</p>`;
+                return;
+            }
+
+            animationSequence.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'anim-item';
+                div.style.borderLeftColor = item.color;
+
+                div.innerHTML = `
+                    <div style="display:flex; flex-direction:column; gap:2px;">
+                        <span style="font-size:10px; color:#888;">#${index + 1} (${item.clip.duration.toFixed(2)}s)</span>
+                        <input type="text" value="${item.name}" data-idx="${index}" class="anim-name-input">
+                    </div>
+                    <div class="anim-item-controls">
+                        <button class="btn btn-mini" data-action="up" data-idx="${index}">▲</button>
+                        <button class="btn btn-mini" data-action="down" data-idx="${index}">▼</button>
+                        <button class="btn btn-mini btn-danger" data-action="del" data-idx="${index}">✕</button>
+                    </div>
+                `;
+
+                animListContainer.appendChild(div);
+            });
+
+            // Eventos de alteração de nome via input
+            animListContainer.querySelectorAll('.anim-name-input').forEach(input => {
+                input.addEventListener('input', (e) => {
+                    const idx = parseInt(input.getAttribute('data-idx'));
+                    animationSequence[idx].name = e.target.value;
+                    drawTimeline(); // Atualiza o texto na timeline em tempo real
+                });
+            });
+
+            // Eventos dos botões da lista (reordenar / excluir)
+            animListContainer.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const idx = parseInt(btn.getAttribute('data-idx'));
+                    const action = btn.getAttribute('data-action');
+
+                    if (action === 'up' && idx > 0) {
+                        const temp = animationSequence[idx];
+                        animationSequence[idx] = animationSequence[idx - 1];
+                        animationSequence[idx - 1] = temp;
+                        rebuildMasterAnimation();
+                    } else if (action === 'down' && idx < animationSequence.length - 1) {
+                        const temp = animationSequence[idx];
+                        animationSequence[idx] = animationSequence[idx + 1];
+                        animationSequence[idx + 1] = temp;
+                        rebuildMasterAnimation();
+                    } else if (action === 'del') {
+                        animationSequence.splice(idx, 1);
+                        rebuildMasterAnimation();
+                    }
+                });
+            });
+        }
+
+        // --- Linha do Tempo Estilo Flash ---
+        function resizeTimelineCanvas() {
+            const wrapper = document.getElementById('timeline-wrapper');
+            if (!wrapper) return;
+            timelineCanvas.width = wrapper.clientWidth;
+            timelineCanvas.height = wrapper.clientHeight;
+            drawTimeline();
+        }
+
+        function setupTimelineEvents() {
+            btnPlay.addEventListener('click', () => {
+                isPlaying = !isPlaying;
+                btnPlay.innerText = isPlaying ? "⏸ Pause" : "▶ Play";
+            });
+
+            const handleScrub = (e) => {
+                if (totalDuration <= 0) return;
+                const rect = timelineCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const pct = Math.max(0, Math.min(1, x / timelineCanvas.width));
+                
+                currentTime = pct * totalDuration;
+                if (mixer) mixer.setTime(currentTime);
+                updateTimelineDisplay();
+            };
+
+            timelineCanvas.addEventListener('mousedown', (e) => {
+                isScrubbing = true;
+                handleScrub(e);
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (isScrubbing) handleScrub(e);
+            });
+
+            window.addEventListener('mouseup', () => {
+                isScrubbing = false;
+            });
+
+            window.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT') return;
+                if (e.code === 'Space') {
+                    e.preventDefault();
+                    isPlaying = !isPlaying;
+                    btnPlay.innerText = isPlaying ? "⏸ Pause" : "▶ Play";
+                }
+            });
+        }
+
+        function updateTimelineDisplay() {
+            timeText.innerText = `${currentTime.toFixed(2)}s / ${totalDuration.toFixed(2)}s`;
+            drawTimeline();
+        }
+
+        function drawTimeline() {
+            if (!ctxTimeline) return;
+            const w = timelineCanvas.width;
+            const h = timelineCanvas.height;
+
+            ctxTimeline.clearRect(0, 0, w, h);
+
+            ctxTimeline.fillStyle = "#121215";
+            ctxTimeline.fillRect(0, 0, w, h);
+
+            if (totalDuration <= 0) return;
+
+            let currentOffset = 0;
+            const trackHeight = 36;
+            const trackY = 24;
+
+            animationSequence.forEach((item) => {
+                const startPx = (currentOffset / totalDuration) * w;
+                const durationPx = (item.clip.duration / totalDuration) * w;
+
+                ctxTimeline.fillStyle = item.color;
+                ctxTimeline.globalAlpha = 0.65;
+                ctxTimeline.fillRect(startPx + 1, trackY, durationPx - 2, trackHeight);
+                ctxTimeline.globalAlpha = 1.0;
+
+                ctxTimeline.strokeStyle = item.color;
+                ctxTimeline.lineWidth = 1;
+                ctxTimeline.strokeRect(startPx + 1, trackY, durationPx - 2, trackHeight);
+
+                ctxTimeline.fillStyle = "#ffffff";
+                ctxTimeline.font = "bold 11px sans-serif";
+                ctxTimeline.fillText(item.name || "Sem Nome", startPx + 6, trackY + 22);
+
+                currentOffset += item.clip.duration;
+            });
+
+            ctxTimeline.fillStyle = "#666";
+            ctxTimeline.font = "9px sans-serif";
+            const numTicks = 10;
+            for (let i = 0; i <= numTicks; i++) {
+                const t = (i / numTicks) * totalDuration;
+                const x = (i / numTicks) * w;
+                ctxTimeline.fillRect(x, 0, 1, 15);
+                ctxTimeline.fillText(t.toFixed(1) + "s", x + 3, 10);
+            }
+
+            const playPx = (currentTime / totalDuration) * w;
+            
+            ctxTimeline.fillStyle = "#f43f5e";
+            ctxTimeline.fillRect(playPx - 1, 0, 2, h);
+
+            ctxTimeline.beginPath();
+            ctxTimeline.moveTo(playPx - 6, 0);
+            ctxTimeline.lineTo(playPx + 6, 0);
+            ctxTimeline.lineTo(playPx, 10);
+            ctxTimeline.closePath();
+            ctxTimeline.fillStyle = "#f43f5e";
+            ctxTimeline.fill();
+        }
+
+        // --- Exportação com Múltiplas Animações Renomeadas ---
+        btnExport.addEventListener('click', () => {
+            if (!currentModel || animationSequence.length === 0) return;
+
+            showLoading("Exportando animações...");
+
+            // Geramos um AnimationClip separado para cada item com o nome personalizado definido pelo usuário
+            const exportClips = animationSequence.map((item) => {
+                return new THREE.AnimationClip(
+                    item.name.trim() || "Animacao",
+                    item.clip.duration,
+                    item.clip.tracks
+                );
+            });
+
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                currentModel,
+                function (gltfBuffer) {
+                    const blob = new Blob([gltfBuffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'animacoes_personalizadas.glb';
+                    link.click();
+                    hideLoading();
+                },
+                function (error) {
+                    console.error("Erro na exportação:", error);
+                    alert("Falha ao exportar GLB.");
+                    hideLoading();
+                },
+                { binary: true, animations: exportClips }
+            );
+        });
+
+        function showLoading(msg) {
+            loadingText.innerText = msg;
+            loadingOverlay.style.display = 'flex';
+        }
+
+        function hideLoading() {
+            loadingOverlay.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
