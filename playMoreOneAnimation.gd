@@ -1,3 +1,12 @@
+Node3d
+ Camera3D
+ CharacterBody3D
+   -> idle
+ CharacterBody3D2
+   -> walking
+
+
+
 
 extends Node3D
 
