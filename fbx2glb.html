@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Mixamo Animation Exporter - Individual</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 40px; background: #121212; color: #fff; }
+        .card { background: #1e1e1e; padding: 25px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 420px; text-align: left; margin-bottom: 20px; }
+        label, input { display: block; width: 100%; margin-bottom: 15px; box-sizing: border-box; }
+        input[type="file"], input[type="text"] { padding: 8px; font-size: 14px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; }
+        button { width: 100%; padding: 12px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        h2 { text-align: center; color: #4CAF50; }
+        .status { text-align: center; color: #ff9800; margin-top: 15px; font-weight: bold; font-size: 13px; }
+        hr { border: 0; border-top: 1px solid #333; margin: 20px 0; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Exportador Individual (GLB)</h2>
+        
+        <label>Ficheiro 3D com Animação (FBX ou GLB):</label>
+        <input type="file" id="fileInput" accept=".fbx,.glb">
+
+        <label>Nome desejado para a Animação:</label>
+        <input type="text" id="animName" value="animacao">
+
+        <label>Nome do Ficheiro GLB a Descarregar:</label>
+        <input type="text" id="fileName" value="personagem_animado.glb">
+        
+        <button id="btnExportar" disabled>Limpar, Processar e Descarregar GLB</button>
+        <p id="status" class="status">Selecione um ficheiro...</p>
+    </div>
+
+    <!-- Importa o Three.js e Loaders/Exporters -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const fileInput = document.getElementById('fileInput');
+        const animNameInput = document.getElementById('animName');
+        const fileNameInput = document.getElementById('fileName');
+        const btnExportar = document.getElementById('btnExportar');
+        const statusText = document.getElementById('status');
+
+        let modeloCarregado = null;
+        let clipCarregado = null;
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            statusText.innerText = "A carregar ficheiro...";
+            const reader = new FileReader();
+            const extension = file.name.split('.').pop().toLowerCase();
+
+            reader.onload = function (event) {
+                const contents = event.target.result;
+
+                try {
+                    if (extension === 'glb' || extension === 'gltf') {
+                        const loader = new GLTFLoader();
+                        loader.parse(contents, '', (gltf) => {
+                            modeloCarregado = gltf.scene;
+                            clipCarregado = gltf.animations[0];
+                            concluirCarregamento();
+                        });
+                    } else if (extension === 'fbx') {
+                        const loader = new FBXLoader();
+                        modeloCarregado = loader.parse(contents, '');
+                        clipCarregado = modeloCarregado.animations[0];
+                        concluirCarregamento();
+                    } else {
+                        statusText.innerText = "Erro: Formato não suportado!";
+                    }
+                } catch (err) {
+                    console.error(err);
+                    statusText.innerText = "Erro ao interpretar o ficheiro.";
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+
+        function concluirCarregamento() {
+            if (modeloCarregado && clipCarregado) {
+                btnExportar.disabled = false;
+                statusText.innerText = "Ficheiro pronto para exportar!";
+            } else {
+                statusText.innerText = "Aviso: O ficheiro não contém animações detetadas.";
+            }
+        }
+
+        // Função para remover quadros estáticos (sem movimento) no início e no fim
+        function limparQuadrosEstaticos(clip, tolerancia = 0.0001) {
+            if (!clip || !clip.tracks || clip.tracks.length === 0) return clip;
+
+            let minTime = clip.duration;
+            let maxTime = 0;
+
+            clip.tracks.forEach(track => {
+                const times = track.times;
+                const values = track.values;
+                const stride = values.length / times.length;
+
+                for (let i = 0; i < times.length; i++) {
+                    let isMoving = false;
+                    if (i > 0) {
+                        for (let j = 0; j < stride; j++) {
+                            if (Math.abs(values[i * stride + j] - values[(i - 1) * stride + j]) > tolerancia) {
+                                isMoving = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        isMoving = true;
+                    }
+
+                    if (isMoving) {
+                        if (times[i] < minTime) minTime = times[i];
+                        if (times[i] > maxTime) maxTime = times[i];
+                    }
+                }
+            });
+
+            if (minTime >= maxTime) return clip;
+
+            const novasTracks = [];
+            let novaDuracao = maxTime - minTime;
+
+            clip.tracks.forEach(track => {
+                const times = track.times;
+                const values = track.values;
+                const stride = values.length / times.length;
+
+                const novosTempos = [];
+                const novosValores = [];
+
+                for (let i = 0; i < times.length; i++) {
+                    if (times[i] >= minTime && times[i] <= maxTime) {
+                        novosTempos.push(times[i] - minTime);
+                        for (let j = 0; j < stride; j++) {
+                            novosValores.push(values[i * stride + j]);
+                        }
+                    }
+                }
+
+                if (novosTempos.length > 0) {
+                    let novaTrack;
+                    const trackName = track.name;
+                    if (track.constructor.name === 'VectorKeyframeTrack') {
+                        novaTrack = new THREE.VectorKeyframeTrack(trackName, novosTempos, novosValores);
+                    } else if (track.constructor.name === 'QuaternionKeyframeTrack') {
+                        novaTrack = new THREE.QuaternionKeyframeTrack(trackName, novosTempos, novosValores);
+                    } else {
+                        novaTrack = new THREE.KeyframeTrack(trackName, novosTempos, novosValores);
+                    }
+                    novasTracks.push(novaTrack);
+                }
+            });
+
+            return new THREE.AnimationClip(clip.name, novaDuracao, novasTracks);
+        }
+
+        btnExportar.addEventListener('click', () => {
+            if (!modeloCarregado || !clipCarregado) return;
+
+            statusText.innerText = "A limpar quadros e a exportar GLB...";
+
+            const nomeDesejado = animNameInput.value || "animacao";
+            let nomeFicheiroDesejado = fileNameInput.value || "modelo.glb";
+            if (!nomeFicheiroDesejado.endsWith('.glb')) nomeFicheiroDesejado += '.glb';
+
+            // Limpa quadros estáticos
+            const clipLimpo = limparQuadrosEstaticos(clipCarregado);
+
+            // Renomeia as faixas para o novo nome pretendido
+            const tracksProcessadas = [];
+            clipLimpo.tracks.forEach(track => {
+                const t = track.clone();
+                t.name = t.name.replace(clipCarregado.name, nomeDesejado);
+                tracksProcessadas.push(t);
+            });
+
+            const novoClip = new THREE.AnimationClip(nomeDesejado, clipLimpo.duration, tracksProcessadas);
+            modeloCarregado.animations = [novoClip];
+
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                modeloCarregado,
+                function (gltfBuffer) {
+                    const blob = new Blob([gltfBuffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = nomeFicheiroDesejado;
+                    link.click();
+                    statusText.innerText = "Sucesso! Ficheiro descarregado.";
+                },
+                function (error) {
+                    console.error(error);
+                    statusText.innerText = "Erro ao exportar.";
+                },
+                { binary: true, animations: modeloCarregado.animations }
+            );
+        });
+    </script>
+
+</body>
+</html>
