@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mixamo — Mesclador de Meshes e Animações (Corrigido)</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:18px;background:#121212;color:#eee;font-family:Arial,Helvetica,sans-serif}
+h1{text-align:center;font-size:22px;margin:0 0 16px}.container{display:flex;gap:18px;max-width:1450px;margin:auto;align-items:flex-start;flex-wrap:wrap}
+.card,.viewer{background:#1e1e1e;border:1px solid #333;border-radius:12px;padding:16px;box-shadow:0 5px 18px #0005}
+.card{flex:1 1 380px;max-height:86vh;overflow:auto}.viewer{flex:1.5 1 500px;min-width:320px}
+h2{text-align:center;font-size:16px;margin:0 0 12px;padding-bottom:8px;border-bottom:1px solid #333}
+.anim-item{background:#262626;border:1px solid #444;border-radius:8px;padding:12px;margin-bottom:12px;display:flex;flex-direction:column;gap:8px}
+.anim-item.active-item{border-color:#4caf50}.item-head{display:flex;align-items:center;justify-content:space-between;color:#81c784;font-weight:bold;font-size:13px}
+label{display:block;font-size:12px;color:#ccc;margin-bottom:4px}input[type=file],input[type=text],select{width:100%;padding:8px;background:#111;color:#eee;border:1px solid #444;border-radius:5px}
+.btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}button{flex:1;min-width:100px;padding:10px;background:#4caf50;color:white;border:0;border-radius:6px;font-weight:bold;cursor:pointer}button:hover{filter:brightness(1.1)}button:disabled{background:#444;color:#888;cursor:not-allowed}button.secondary{background:#1976d2}button.danger{background:#c62828;flex:0 0 auto;min-width:70px;padding:6px;font-size:12px}
+#canvas-container{width:100%;height:380px;background:#050505;border:1px solid #333;border-radius:8px;overflow:hidden;position:relative}
+#playbackControls{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}#playbackControls button{min-width:120px;background:#333}#playbackControls button.active{background:#4caf50}
+#status{font-size:12px;color:#ffb74d;line-height:1.4;margin:10px 0 0;white-space:pre-wrap}.hint{font-size:11px;color:#aaa;line-height:1.4}
+.empty{color:#777;font-size:12px;text-align:center;width:100%;padding:10px}
+</style>
+</head>
+<body>
+<h1>Mixamo — Mesclador de Meshes e Animações</h1>
+<div class="container">
+  <section class="card">
+    <h2>Arquivos e Animações</h2>
+    <div id="animList"></div>
+    <div class="btn-row">
+      <button id="btnAdd" class="secondary">+ Adicionar arquivo</button>
+      <button id="btnExport" disabled>Exportar GLB com Animações</button>
+    </div>
+    <p class="hint">Cada arquivo mantém o seu próprio esqueleto e mesh. O arquivo GLB final conterá todas as animações devidamente mapeadas e funcionais.</p>
+    <p id="status">Adicione arquivos FBX, GLB ou glTF.</p>
+  </section>
+  <section class="viewer">
+    <h2>Pré-visualização 3D</h2>
+    <div id="canvas-container"></div>
+    <div class="btn-row">
+      <button id="btnPlay" class="secondary" disabled>▶ Reproduzir</button>
+      <button id="btnPause" class="secondary" disabled>⏸ Pausar</button>
+      <button id="btnStop" class="secondary" disabled>■ Reiniciar</button>
+    </div>
+    <label style="margin-top:12px">Animação em exibição:</label>
+    <div id="playbackControls"><span class="empty">Nenhuma animação selecionada</span></div>
+  </section>
+</div>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {FBXLoader} from 'three/addons/loaders/FBXLoader.js';
+import {GLTFExporter} from 'three/addons/exporters/GLTFExporter.js';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {clone as cloneSkinned} from 'three/addons/utils/SkeletonUtils.js';
+
+const $=id=>document.getElementById(id);
+const list=$('animList'), status=$('status'), controlsBox=$('playbackControls');
+let items=[], nextId=0, currentPreviewModel=null, activeMixer=null, activeAction=null, activeIndex=-1;
+const clock=new THREE.Clock();
+const container=$('canvas-container');
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x141414);
+const camera=new THREE.PerspectiveCamera(45,container.clientWidth/container.clientHeight,.1,1000);
+camera.position.set(0,1.5,4.2);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(container.clientWidth,container.clientHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace;container.appendChild(renderer.domElement);
+const orbit=new OrbitControls(camera,renderer.domElement);orbit.target.set(0,1,0);orbit.update();
+scene.add(new THREE.HemisphereLight(0xffffff,0x555566,2));
+const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(5,8,6);scene.add(light);
+scene.add(new THREE.GridHelper(10,10,0x444444,0x222222));
+
+function renderLoop(){
+ requestAnimationFrame(renderLoop);
+ const dt=Math.min(clock.getDelta(),.05);
+ if(activeMixer) activeMixer.update(dt);
+ renderer.render(scene,camera);
+}
+renderLoop();
+new ResizeObserver(()=>{const w=container.clientWidth,h=container.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)}).observe(container);
+
+function setStatus(msg){status.textContent=msg}
+function safeName(s){return (s||'animacao').trim().replace(/[^a-zA-Z0-9_-]/g,'_')||'animacao'}
+
+function clearPreview(){
+ if(activeMixer){activeMixer.stopAllAction();activeMixer.uncacheRoot(activeMixer.getRoot());activeMixer=null;}
+ if(currentPreviewModel){scene.remove(currentPreviewModel);currentPreviewModel=null;}
+ activeAction=null; activeIndex=-1;
+ $('btnPlay').disabled=true;$('btnPause').disabled=true;$('btnStop').disabled=true;
+ updatePlaybackButtons();
+}
+
+function loadFile(file,done){
+ const ext=file.name.split('.').pop().toLowerCase(),reader=new FileReader();
+ reader.onerror=()=>setStatus('Não foi possível ler o arquivo.');
+ reader.onload=e=>{
+  try{
+   if(ext==='fbx'){const obj=new FBXLoader().parse(e.target.result,'');done(obj,obj.animations||[])}
+   else if(ext==='glb'||ext==='gltf'){new GLTFLoader().parse(e.target.result,'',g=>done(g.scene,g.animations||[]),err=>{setStatus('Erro no GLB: '+(err?.message||err))})}
+   else setStatus('Formato não suportado.');
+  }catch(err){setStatus('Erro ao carregar: '+err.message)}
+ };
+ if(ext==='gltf')reader.readAsText(file);else reader.readAsArrayBuffer(file);
+}
+
+function addItem(){
+ const id=++nextId,el=document.createElement('div');el.className='anim-item';el.id='item-'+id;
+ el.innerHTML=`<div class="item-head"><span>Arquivo #${id}</span><button class="danger" data-delete>Remover</button></div>
+ <div><label>Arquivo FBX / GLB / glTF</label><input type="file" accept=".fbx,.glb,.gltf" data-file></div>
+ <div data-anim-wrap style="display:none"><label>Animação deste arquivo</label><select data-anim></select></div>
+ <div><label>Nome do Clipe no GLB final</label><input type="text" value="anim_${id}" data-name></div>
+ <div class="hint" data-info>Aguardando arquivo.</div>`;
+ list.appendChild(el);
+ const item={id,el,fileInput:el.querySelector('[data-file]'),animSelect:el.querySelector('[data-anim]'),animWrap:el.querySelector('[data-anim-wrap]'),nameInput:el.querySelector('[data-name]'),info:el.querySelector('[data-info]'),source:null,clips:[],selectedClip:null};
+ items.push(item);
+
+ item.fileInput.addEventListener('change',()=>{
+  const file=item.fileInput.files?.[0];if(!file)return;
+  item.info.textContent='Carregando…';setStatus('Carregando '+file.name+'…');
+  loadFile(file,(obj,clips)=>{
+   item.source=obj;item.clips=clips;item.selectedClip=null;
+   item.animSelect.innerHTML='';
+   if(clips.length){
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='— Selecione uma animação —';placeholder.selected=true;item.animSelect.appendChild(placeholder);
+    clips.forEach((clip,i)=>{const op=document.createElement('option');op.value=i+1;op.textContent=`${clip.name||'Animação '+(i+1)} (${clip.duration.toFixed(2)} s)`;item.animSelect.appendChild(op)});
+    item.animWrap.style.display='block';item.info.textContent=`Modelo carregado (${clips.length} animações).`;
+   }else{item.animWrap.style.display='none';item.info.textContent='Sem animações encontradas.'}
+   clearPreview();refreshExportState();setStatus('Selecione uma animação para visualizar.');
+  });
+ });
+
+ item.animSelect.addEventListener('change',()=>{
+  if(item.animSelect.value==='')return;
+  item.selectedClip=item.clips[Number(item.animSelect.value)-1];
+  if(!item.nameInput.dataset.edited) item.nameInput.value=safeName(item.selectedClip.name||`anim_${item.id}`);
+  displayAnimation(item);
+  refreshExportState();
+ });
+
+ item.nameInput.addEventListener('input',()=>{item.nameInput.dataset.edited='1';updatePlaybackButtons();});
+ el.querySelector('[data-delete]').addEventListener('click',()=>{
+  const idx=items.indexOf(item);
+  items=items.filter(x=>x!==item);el.remove();
+  if(activeIndex===idx) clearPreview();
+  refreshExportState();
+  updatePlaybackButtons();
+ });
+ refreshExportState();
+}
+
+function refreshExportState(){
+ const valid=items.filter(i=>i.source && i.selectedClip);
+ $('btnExport').disabled=valid.length===0;
+}
+
+function updatePlaybackButtons(){
+ controlsBox.innerHTML='';
+ const valid=items.filter(i=>i.source && i.selectedClip);
+ if(!valid.length){controlsBox.innerHTML='<span class="empty">Nenhuma animação selecionada</span>';return;}
+ valid.forEach((it)=>{
+  const idx=items.indexOf(it);
+  const b=document.createElement('button');
+  b.textContent=`${idx+1}. ${it.nameInput.value.trim()||it.selectedClip.name||'Animação'}`;
+  if(idx===activeIndex) b.classList.add('active');
+  b.addEventListener('click',()=>displayAnimation(it));
+  controlsBox.appendChild(b);
+ });
+}
+
+function displayAnimation(item){
+ clearPreview();
+ if(!item || !item.source || !item.selectedClip) return;
+
+ activeIndex=items.indexOf(item);
+
+ currentPreviewModel=cloneSkinned(item.source);
+ currentPreviewModel.name=`Preview_${item.id}`;
+ currentPreviewModel.visible=true;
+ scene.add(currentPreviewModel);
+
+ fitModel(currentPreviewModel);
+
+ activeMixer=new THREE.AnimationMixer(currentPreviewModel);
+ activeAction=activeMixer.clipAction(item.selectedClip);
+ activeAction.reset();
+ activeAction.setLoop(THREE.LoopRepeat, Infinity);
+ activeAction.play();
+
+ $('btnPlay').disabled=false;$('btnPause').disabled=false;$('btnStop').disabled=false;
+ updatePlaybackButtons();
+
+ list.querySelectorAll('.anim-item').forEach((el,i)=>el.classList.toggle('active-item',i===activeIndex));
+ setStatus(`Exibindo animação: ${item.nameInput.value.trim()||item.selectedClip.name}.`);
+}
+
+function fitModel(model){
+ model.updateMatrixWorld(true);
+ const box=new THREE.Box3().setFromObject(model);
+ if(box.isEmpty())return;
+ const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
+ model.position.x-=center.x;model.position.z-=center.z;model.position.y-=box.min.y;
+ const maxDim=Math.max(size.x,size.y,size.z)||1;
+ camera.position.set(0,Math.max(1,size.y*.55),Math.max(2.5,maxDim*2.4));
+ orbit.target.set(0,Math.max(.5,size.y*.45),0);orbit.update();
+}
+
+$('btnAdd').addEventListener('click',addItem);
+$('btnPlay').addEventListener('click',()=>{if(activeAction){activeAction.paused=false;activeAction.play();setStatus('Em reprodução.');}});
+$('btnPause').addEventListener('click',()=>{if(activeAction){activeAction.paused=true;setStatus('Pausado.');}});
+$('btnStop').addEventListener('click',()=>{if(activeAction){activeAction.stop();activeAction.reset();activeAction.play();setStatus('Reiniciado.');}});
+
+$('btnExport').addEventListener('click',()=>{
+ const valid=items.filter(i=>i.source && i.selectedClip);
+ if(!valid.length) return;
+ setStatus('Exportando arquivo GLB com clipes e mapeamentos válidos…');
+
+ try{
+  const exportRoot=new THREE.Group();
+  exportRoot.name='Mixamo_Merged_Assets';
+  
+  const allModelNames=[];
+  const exportData=[];
+
+  valid.forEach((item, idx)=>{
+   const prefix=`char_${idx+1}`;
+   const model=cloneSkinned(item.source);
+   const modelName=`${prefix}_model`;
+   model.name=modelName;
+
+   // Mapeamento limpo preservando os nomes dos ossos e adicionando o prefixo no caminho hierárquico
+   model.traverse(node=>{
+    if(node.isBone || node.isSkinnedMesh || node.isObject3D){
+     if(node !== model && node.name && !node.name.startsWith(prefix)){
+      node.name = `${prefix}_${node.name}`;
+     }
+    }
+   });
+
+   allModelNames.push(modelName);
+   exportRoot.add(model);
+   exportData.push({model, modelName, prefix, item});
+  });
+
+  const exportClips=[];
+
+  exportData.forEach(ed=>{
+   const nodeMap=new Map();
+   ed.model.traverse(node=>{
+    if(node.name){
+     // Mapeia o nome original do osso/nó para o novo nome com prefixo único na cena
+     const orig=node.name.replace(`${ed.prefix}_`, '');
+     nodeMap.set(orig, node.name);
+     nodeMap.set(node.name, node.name);
+    }
+   });
+
+   const targetedTracks=[];
+   ed.item.selectedClip.tracks.forEach(track=>{
+    const t=track.clone();
+    const dot=t.name.lastIndexOf('.');
+    if(dot>=0){
+     const path=t.name.slice(0,dot), prop=t.name.slice(dot);
+     
+     // Resolve o nó alvo da trilha garantindo que pertença ao modelo correto
+     if(nodeMap.has(path)){
+      t.name = nodeMap.get(path) + prop;
+      targetedTracks.push(t);
+     } else {
+      const parts = path.split('/');
+      const leaf = parts[parts.length - 1];
+      if(nodeMap.has(leaf)){
+       parts[parts.length - 1] = nodeMap.get(leaf);
+       t.name = parts.join('/') + prop;
+       targetedTracks.push(t);
+      }
+     }
+    }
+   });
+
+   const duration=ed.item.selectedClip.duration;
+   const scaleTracks=[];
+   
+   // Adiciona trilhas de escala para ocultar os outros modelos mantendo as animações válidas
+   allModelNames.forEach(name=>{
+    const isThis=(name===ed.modelName);
+    const scaleVal=isThis?1:0.00001;
+    scaleTracks.push(new THREE.VectorKeyframeTrack(`${name}.scale`, [0, duration], [scaleVal,scaleVal,scaleVal, scaleVal,scaleVal,scaleVal]));
+   });
+
+   const clipName=safeName(ed.item.nameInput.value||ed.item.selectedClip.name||`anim_${ed.item.id}`);
+   exportClips.push(new THREE.AnimationClip(clipName, duration, [...targetedTracks, ...scaleTracks]));
+  });
+
+  const exporter=new GLTFExporter();
+  exporter.parse(exportRoot,result=>{
+   const blob=new Blob([result],{type:'model/gltf-binary'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+   a.href=url;a.download='mixamo_animacoes_completas.glb';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+   setStatus(`Exportação concluída com sucesso! ${exportClips.length} animações válidas incluídas.`);
+  },err=>{
+   setStatus('Falha ao exportar: '+(err?.message||err));
+  },{binary:true,animations:exportClips});
+
+ }catch(err){
+  setStatus('Erro ao preparar exportação: '+err.message);
+ }
+});
+
+addItem();
+</script>
+</body>
+</html>
