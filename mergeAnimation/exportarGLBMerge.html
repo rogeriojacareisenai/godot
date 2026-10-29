@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Mixamo Animation Merger & Renamer</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 40px; background: #121212; color: #fff; }
+        .card { background: #1e1e1e; padding: 25px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 450px; text-align: left; }
+        label, input { display: block; width: 100%; margin-bottom: 15px; box-sizing: border-box; }
+        input[type="file"], input[type="text"] { padding: 8px; font-size: 14px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; }
+        button { width: 100%; padding: 12px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #45a049; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        h2 { text-align: center; }
+        #status { text-align: center; color: #ff9800; margin-top: 15px; font-weight: bold; }
+        .animation-item { background: #2a2a2a; padding: 10px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #444; }
+        .animation-item label { display: inline; width: auto; margin-left: 5px; }
+        .animation-item input[type="checkbox"] { display: inline; width: auto; margin-right: 5px; }
+        .animation-item input[type="text"] { margin-top: 8px; margin-bottom: 0; }
+        #animationList { max-height: 250px; overflow-y: auto; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Unificador & Renomeador</h2>
+        
+        <label>Selecionar Ficheiro(s) (FBX ou GLB):</label>
+        <input type="file" id="fileInput" accept=".fbx,.glb" multiple>
+
+        <div id="animationList"></div>
+        
+        <button id="btnUnir" disabled>Unir, Renomear e Descarregar GLB</button>
+        <p id="status">Carrega pelo menos um ficheiro com animações válidas...</p>
+    </div>
+
+    <!-- Importa o Three.js e Loaders/Exporters -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const fileInput = document.getElementById('fileInput');
+        const animationListDiv = document.getElementById('animationList');
+        const btnUnir = document.getElementById('btnUnir');
+        const statusText = document.getElementById('status');
+
+        let modeloBase = null;
+        let animacoesDisponiveis = []; // Lista de objetos { clip, sourceName }
+
+        function temApenasUmQuadro(clip) {
+            // Se a duração for 0 ou não houver pistas, considera inválido/um único quadro
+            if (!clip.tracks || clip.tracks.length === 0 || clip.duration <= 0) return true;
+            
+            // Verifica se todas as pistas possuem apenas 1 frame/tempo único registrado
+            for (let track of clip.tracks) {
+                if (track.times && track.times.length > 1) {
+                    return false; // Encontrou mais de um quadro em pelo menos uma pista
+                }
+            }
+            return true; // Possui 1 quadro ou menos em todas as pistas
+        }
+
+        fileInput.addEventListener('change', (e) => {
+            const files = e.target.files;
+            if (!files.length) return;
+
+            statusText.innerText = "A carregar ficheiros...";
+            animationListDiv.innerHTML = "";
+            animacoesDisponiveis = [];
+            modeloBase = null;
+            btnUnir.disabled = true;
+
+            let arquivosProcessados = 0;
+
+            Array.from(files).forEach((file) => {
+                const reader = new FileReader();
+                const extension = file.name.split('.').pop().toLowerCase();
+
+                reader.onload = function (event) {
+                    const contents = event.target.result;
+
+                    const processarClips = (scene, clips) => {
+                        if (!modeloBase) {
+                            modeloBase = scene; // Guarda o primeiro modelo como base estrutural
+                        }
+
+                        if (clips && clips.length > 0) {
+                            clips.forEach((clip) => {
+                                // ATENÇÃO: Ignora animações com somente um quadro ou sem duração
+                                if (temApenasUmQuadro(clip)) {
+                                    console.warn(`Animação ignorada (possui apenas 1 quadro ou duração inválida): ${clip.name}`);
+                                    return;
+                                }
+                                animacoesDisponiveis.push({
+                                    clip: clip,
+                                    sourceName: clip.name || "anim_sem_nome"
+                                });
+                            });
+                        }
+
+                        arquivosProcessados++;
+                        if (arquivosProcessados === files.length) {
+                            construirInterfaceAnimacoes();
+                        }
+                    };
+
+                    if (extension === 'glb' || extension === 'gltf') {
+                        const loader = new GLTFLoader();
+                        loader.parse(contents, '', (gltf) => {
+                            processarClips(gltf.scene, gltf.animations);
+                        }, (err) => {
+                            console.error(err);
+                            arquivosProcessados++;
+                        });
+                    } else if (extension === 'fbx') {
+                        const loader = new FBXLoader();
+                        const object = loader.parse(contents, '');
+                        processarClips(object, object.animations);
+                    } else {
+                        arquivosProcessados++;
+                    }
+                };
+
+                reader.readAsArrayBuffer(file);
+            });
+        });
+
+        function construirInterfaceAnimacoes() {
+            animationListDiv.innerHTML = "";
+
+            if (animacoesDisponiveis.length === 0) {
+                statusText.innerText = "Nenhuma animação válida encontrada (ou todas tinham apenas 1 quadro).";
+                return;
+            }
+
+            animacoesDisponiveis.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'animation-item';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `anim_check_${index}`;
+                checkbox.checked = true; // Selecionado por padrão
+
+                const label = document.createElement('label');
+                label.htmlFor = `anim_check_${index}`;
+                label.innerText = ` ${item.sourceName} (${item.clip.duration.toFixed(2)}s)`;
+
+                const textInput = document.createElement('input');
+                textInput.type = 'text';
+                textInput.id = `anim_name_${index}`;
+                textInput.value = item.sourceName || `animacao_${index + 1}`;
+
+                div.appendChild(checkbox);
+                div.appendChild(label);
+                div.appendChild(textInput);
+                animationListDiv.appendChild(div);
+            });
+
+            btnUnir.disabled = false;
+            statusText.innerText = `${animacoesDisponiveis.length} animação(ões) válida(s) encontrada(s).`;
+        }
+
+        btnUnir.addEventListener('click', () => {
+            statusText.innerText = "A processar e concatenar animações...";
+
+            const novasTracks = [];
+            let tempoAcumulado = 0;
+            const novosClipsParaExportar = [];
+
+            animacoesDisponiveis.forEach((item, index) => {
+                const checkbox = document.getElementById(`anim_check_${index}`);
+                const nameInput = document.getElementById(`anim_name_${index}`);
+
+                if (checkbox && checkbox.checked) {
+                    const nomeDesejado = nameInput.value || `anim_${index}`;
+                    const clipOriginal = item.clip;
+
+                    // Cria as faixas ajustando o tempo de início sequencialmente (opcional, empilhando as animações)
+                    const tracksDesteClip = [];
+                    clipOriginal.tracks.forEach(track => {
+                        const novaTrack = track.clone();
+                        for (let i = 0; i < novaTrack.times.length; i++) {
+                            novaTrack.times[i] += tempoAcumulado;
+                        }
+                        novaTrack.name = novaTrack.name.replace(clipOriginal.name, nomeDesejado);
+                        tracksDesteClip.push(novaTrack);
+                    });
+
+                    const duracaoTotalClip = tempoAcumulado + clipOriginal.duration;
+                    const novoClipUnificado = new THREE.AnimationClip(nomeDesejado, duracaoTotalClip, tracksDesteClip);
+                    
+                    novosClipsParaExportar.push(novoClipUnificado);
+                    
+                    // Incrementa o deslocamento de tempo para a próxima animação na timeline combinada
+                    tempoAcumulado += clipOriginal.duration;
+                }
+            });
+
+            if (novosClipsParaExportar.length === 0) {
+                statusText.innerText = "Erro: Nenhuma animação foi selecionada!";
+                return;
+            }
+
+            modeloBase.animations = novosClipsParaExportar;
+
+            const exporter = new GLTFExporter();
+            exporter.parse(
+                modeloBase,
+                function (gltfBuffer) {
+                    const blob = new Blob([gltfBuffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'personagem_animacoes_combinadas.glb';
+                    link.click();
+                    statusText.innerText = "Sucesso! Ficheiro descarregado.";
+                },
+                function (error) {
+                    console.error(error);
+                    statusText.innerText = "Erro ao exportar.";
+                },
+                { binary: true, animations: modeloBase.animations }
+            );
+        });
+    </script>
+
+</body>
+</html>
