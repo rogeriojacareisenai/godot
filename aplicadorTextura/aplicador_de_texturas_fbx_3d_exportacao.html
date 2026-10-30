@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplicador de Textura FBX 3D</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Import Maps para Three.js e seus add-ons modernos -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+            "@comfyorg/fbx-exporter-three": "https://esm.sh/@comfyorg/fbx-exporter-three@1.0.1?external=three"
+        }
+    }
+    </script>
+
+    <style>
+        /* CSS Customizado para Scrollbar e Efeitos */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4b5563;
+        }
+        .active-texture-ring {
+            box-shadow: 0 0 0 3px #3b82f6;
+        }
+        canvas {
+            outline: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans h-screen flex flex-col overflow-hidden select-none">
+
+    <!-- Header / Barra Superior -->
+    <header class="h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 z-10 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="bg-blue-600 text-white p-2 rounded-lg">
+                <i class="fa-solid fa-cube text-xl"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-tight">FBX Texture Studio</h1>
+                <p class="text-xs text-gray-400">Aplicador de Texturas 3D em Tempo Real</p>
+            </div>
+        </div>
+
+        <!-- Ações do Histórico (Undo / Redo) & Quick Controls -->
+        <div class="flex items-center space-x-2">
+            <button id="btn-undo" class="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed" title="Desfazer (Ctrl+Z)" disabled>
+                <i class="fa-solid fa-rotate-left"></i>
+                <span class="hidden sm:inline">Desfazer</span>
+            </button>
+            <button id="btn-redo" class="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed" title="Refazer (Ctrl+Y)" disabled>
+                <i class="fa-solid fa-rotate-right"></i>
+                <span class="hidden sm:inline">Refazer</span>
+            </button>
+            <div class="h-6 w-px bg-gray-700 mx-1"></div>
+            <button id="btn-reset-view" class="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded-lg transition" title="Centralizar Câmera">
+                <i class="fa-solid fa-arrows-to-eye"></i>
+                <span class="hidden sm:inline">Enquadrar</span>
+            </button>
+            <button id="btn-export-fbx" class="flex items-center space-x-2 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-sm font-semibold rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed" title="Exportar modelo FBX com texturas incorporadas" disabled>
+                <i class="fa-solid fa-file-export"></i>
+                <span>Exportar FBX</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Layout Principal -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- Visualizador 3D (Canvas Container) -->
+        <main class="flex-1 relative bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950" id="canvas-container">
+            
+            <!-- Canvas do Three.js -->
+            <canvas id="three-canvas" class="w-full h-full block cursor-grab active:cursor-grabbing"></canvas>
+
+            <!-- Loading Indicator -->
+            <div id="loading-overlay" class="absolute inset-0 bg-gray-900/80 backdrop-blur-sm flex flex-col items-center justify-center z-20 hidden">
+                <div class="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-3"></div>
+                <p id="loading-text" class="text-blue-400 font-medium">Carregando arquivo FBX...</p>
+            </div>
+
+            <!-- Overlay de Dica Inicial quando não há modelo -->
+            <div id="drop-zone-overlay" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-6 text-center">
+                <div class="bg-gray-800/90 border-2 border-dashed border-gray-600 p-8 rounded-2xl max-w-md pointer-events-auto backdrop-blur flex flex-col items-center shadow-2xl">
+                    <i class="fa-solid fa-file-import text-5xl text-blue-500 mb-4 animate-bounce"></i>
+                    <h2 class="text-xl font-bold mb-2">Nenhum Modelo Carregado</h2>
+                    <p class="text-gray-400 text-sm mb-6">Carregue um arquivo .FBX do seu computador ou arraste para qualquer lugar nesta tela.</p>
+                    <label class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-5 py-2.5 rounded-lg cursor-pointer transition shadow-lg shadow-blue-600/30">
+                        <i class="fa-solid fa-folder-open mr-2"></i>Selecionar FBX
+                        <input type="file" id="fbx-file-input" accept=".fbx" class="hidden">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Card de Info da Parte Selecionada (Sobreposto no Visualizador) -->
+            <div id="selected-part-info" class="absolute bottom-4 left-4 bg-gray-800/90 border border-gray-700/80 backdrop-blur rounded-xl p-3 px-4 text-sm shadow-xl flex items-center space-x-3 hidden z-10">
+                <div class="p-2 bg-blue-500/20 text-blue-400 rounded-lg">
+                    <i class="fa-solid fa-vector-square text-base"></i>
+                </div>
+                <div>
+                    <div class="text-xs text-gray-400">Parte Selecionada:</div>
+                    <div id="selected-part-name" class="font-bold text-gray-100 max-w-[200px] truncate">Nenhuma</div>
+                </div>
+                <button id="btn-apply-selected" class="ml-2 bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-md">
+                    <i class="fa-solid fa-fill-drip"></i>
+                    <span>Aplicar Textura</span>
+                </button>
+            </div>
+
+            <!-- Instruções de Ajuda no Canvas -->
+            <div class="absolute top-4 left-4 bg-gray-800/70 backdrop-blur border border-gray-700/50 rounded-lg p-2.5 text-xs text-gray-300 space-y-1 shadow-md hidden sm:block pointer-events-none">
+                <div><span class="text-blue-400 font-semibold"><i class="fa-solid fa-mouse-pointer mr-1"></i>Clique em uma parte:</span> Selecionar</div>
+                <div><span class="text-blue-400 font-semibold"><i class="fa-solid fa-hand-pointer mr-1"></i>Hover:</span> Destacar parte sob o cursor</div>
+                <div><span class="text-blue-400 font-semibold"><i class="fa-solid fa-arrows-spin mr-1"></i>Botão Esquerdo + Arrastar:</span> Girar Câmera</div>
+                <div><span class="text-blue-400 font-semibold"><i class="fa-solid fa-arrows-up-down-left-right mr-1"></i>Botão Direito + Arrastar:</span> Mover Câmera</div>
+            </div>
+        </main>
+
+        <!-- Sidebar Direita (Painel de Gerenciamento) -->
+        <aside class="w-80 bg-gray-800 border-l border-gray-700 flex flex-col shrink-0">
+            
+            <!-- Aba de Modelo 3D -->
+            <div class="p-4 border-b border-gray-700">
+                <h3 class="font-semibold text-sm text-gray-300 uppercase tracking-wider mb-3 flex items-center">
+                    <i class="fa-solid fa-cube mr-2 text-blue-400"></i> Modelo FBX
+                </h3>
+                <label class="w-full flex items-center justify-center space-x-2 bg-gray-700 hover:bg-gray-600 text-gray-200 border border-gray-600 py-2.5 px-4 rounded-lg cursor-pointer transition text-sm font-medium">
+                    <i class="fa-solid fa-upload"></i>
+                    <span>Trocar / Importar FBX</span>
+                    <input type="file" id="sidebar-fbx-input" accept=".fbx" class="hidden">
+                </label>
+                <div id="fbx-filename-display" class="mt-2 text-xs text-gray-400 truncate text-center hidden">
+                    Nenhum arquivo ativo
+                </div>
+            </div>
+
+            <!-- Gerenciador de Texturas -->
+            <div class="flex-1 p-4 flex flex-col min-h-0">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-sm text-gray-300 uppercase tracking-wider flex items-center">
+                        <i class="fa-solid fa-images mr-2 text-blue-400"></i> Biblioteca de Texturas
+                    </h3>
+                    <span id="texture-count" class="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">0</span>
+                </div>
+
+                <!-- Botão de Importar Texturas -->
+                <label class="w-full flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-500 text-white py-2.5 px-4 rounded-lg cursor-pointer transition text-sm font-medium shadow-md shadow-blue-600/20 mb-4 shrink-0">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Adicionar Texturas</span>
+                    <input type="file" id="texture-file-input" accept="image/png, image/jpeg, image/webp" multiple class="hidden">
+                </label>
+
+                <!-- Grid de Thumbnails de Textura -->
+                <div id="texture-gallery" class="flex-1 overflow-y-auto grid grid-cols-2 gap-3 pr-1">
+                    <!-- Texturas carregadas dinamicamente aqui -->
+                </div>
+
+                <!-- Estado Vazio da Galeria -->
+                <div id="texture-empty-state" class="flex-1 flex flex-col items-center justify-center text-center p-4 border-2 border-dashed border-gray-700 rounded-xl my-2">
+                    <i class="fa-regular fa-image text-3xl text-gray-600 mb-2"></i>
+                    <p class="text-xs text-gray-400">Nenhuma textura carregada.</p>
+                    <p class="text-[10px] text-gray-500 mt-1">Envie imagens JPG, PNG ou WebP do seu computador.</p>
+                </div>
+            </div>
+
+            <!-- Opções da Textura / Material Activo -->
+            <div class="p-4 border-t border-gray-700 bg-gray-850 space-y-3">
+                <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Ajustes do Material</h4>
+                
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-gray-400 block mb-1">Repetição U (X)</label>
+                        <input type="number" id="repeat-u" value="1" min="0.1" step="0.5" class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-400 block mb-1">Repetição V (Y)</label>
+                        <input type="number" id="repeat-v" value="1" min="0.1" step="0.5" class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-1">
+                    <label for="roughness-slider" class="text-xs text-gray-400">Rugosidade (Roughness)</label>
+                    <input type="range" id="roughness-slider" min="0" max="1" step="0.05" value="0.5" class="w-24 accent-blue-500">
+                </div>
+            </div>
+
+            <!-- Footer / Dica de Atalho -->
+            <div class="p-3 bg-gray-900 border-t border-gray-700/60 text-center text-[11px] text-gray-500">
+                Atalhos: <kbd class="px-1.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-gray-300">Ctrl+Z</kbd> Desfazer | <kbd class="px-1.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-gray-300">Ctrl+Y</kbd> Refazer
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- Script Principal do Aplicativo -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+        import { FBXExporter } from '@comfyorg/fbx-exporter-three';
+
+        // --- ESTADO DA APLICAÇÃO ---
+        const state = {
+            currentFBX: null,
+            currentFBXName: 'modelo',
+            meshes: [],             // Lista de meshes do modelo atual
+            textures: [],           // [{ id, name, dataUrl, textureThree }]
+            selectedTextureId: null,
+            selectedMesh: null,
+            hoveredMesh: null,
+            history: [],            // Pilha de Desfazer
+            redoStack: [],          // Pilha de Refazer
+            textureRepeat: { u: 1, v: 1 },
+            materialRoughness: 0.5
+        };
+
+        // --- ELEMENTOS DO DOM ---
+        const canvas = document.getElementById('three-canvas');
+        const canvasContainer = document.getElementById('canvas-container');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const dropZoneOverlay = document.getElementById('drop-zone-overlay');
+        const fbxFileInput = document.getElementById('fbx-file-input');
+        const sidebarFbxInput = document.getElementById('sidebar-fbx-input');
+        const fbxFilenameDisplay = document.getElementById('fbx-filename-display');
+        const textureFileInput = document.getElementById('texture-file-input');
+        const textureGallery = document.getElementById('texture-gallery');
+        const textureEmptyState = document.getElementById('texture-empty-state');
+        const textureCount = document.getElementById('texture-count');
+        const selectedPartInfo = document.getElementById('selected-part-info');
+        const selectedPartName = document.getElementById('selected-part-name');
+        const btnApplySelected = document.getElementById('btn-apply-selected');
+        const btnUndo = document.getElementById('btn-undo');
+        const btnRedo = document.getElementById('btn-redo');
+        const btnResetView = document.getElementById('btn-reset-view');
+        const btnExportFBX = document.getElementById('btn-export-fbx');
+        const repeatUInput = document.getElementById('repeat-u');
+        const repeatVInput = document.getElementById('repeat-v');
+        const roughnessSlider = document.getElementById('roughness-slider');
+
+        // --- CONFIGURAÇÃO DA CENA THREE.JS ---
+        let scene, camera, renderer, controls, raycaster, mouse;
+        let ambientLight, directionalLight, hemiLight;
+
+        function initThree() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111827);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 2000);
+            camera.position.set(0, 100, 250);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Iluminação
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+            hemiLight.position.set(0, 200, 0);
+            scene.add(hemiLight);
+
+            directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            directionalLight.position.set(100, 200, 100);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            scene.add(directionalLight);
+
+            // Raycaster & Mouse para Seleção
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Grid auxiliar no chão
+            const gridHelper = new THREE.GridHelper(300, 30, 0x374151, 0x1f2937);
+            gridHelper.position.y = -0.1;
+            scene.add(gridHelper);
+
+            // Render loop
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // Animação/efeito suave na mesh destacada por hover
+            if (state.hoveredMesh && state.hoveredMesh !== state.selectedMesh) {
+                const time = Date.now() * 0.005;
+                if (state.hoveredMesh.material && state.hoveredMesh.material.emissive) {
+                    state.hoveredMesh.material.emissive.setHex(0x2563eb);
+                    state.hoveredMesh.material.emissiveIntensity = 0.3 + Math.sin(time) * 0.15;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Resizing
+        window.addEventListener('resize', () => {
+            if (!camera || !renderer) return;
+            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+        });
+
+        // --- CARREGAMENTO DE MODELO FBX ---
+        function loadFBXFile(file) {
+            if (!file) return;
+
+            showLoading(`Carregando "${file.name}"...`);
+
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                const contents = e.target.result;
+                const loader = new FBXLoader();
+
+                try {
+                    const object = loader.parse(contents, '');
+
+                    // Limpa FBX antigo da cena
+                    if (state.currentFBX) {
+                        scene.remove(state.currentFBX);
+                        disposeObject(state.currentFBX);
+                    }
+
+                    state.currentFBX = object;
+                    state.currentFBXName = file.name.replace(/\\.fbx$/i, '') || 'modelo';
+                    btnExportFBX.disabled = false;
+                    state.meshes = [];
+                    state.history = [];
+                    state.redoStack = [];
+                    updateUndoRedoUI();
+                    clearSelection();
+
+                    // Prepara materiais e meshes do FBX
+                    object.traverse((child) => {
+                        if (child.isMesh) {
+                            state.meshes.push(child);
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+
+                            // Garante que a mesh possua material independente editável
+                            if (child.material) {
+                                if (Array.isArray(child.material)) {
+                                    child.material = child.material.map(m => prepareMaterial(m));
+                                } else {
+                                    child.material = prepareMaterial(child.material);
+                                }
+                            }
+                        }
+                    });
+
+                    scene.add(object);
+
+                    // Ajuste de câmera e enquadramento automático
+                    fitCameraToObject(object);
+
+                    // Atualiza UI
+                    dropZoneOverlay.classList.add('hidden');
+                    fbxFilenameDisplay.textContent = file.name;
+                    fbxFilenameDisplay.classList.remove('hidden');
+
+                    hideLoading();
+                } catch (err) {
+                    console.error("Erro ao processar FBX:", err);
+                    alert("Falha ao abrir o arquivo FBX. Verifique se o formato está correto.");
+                    hideLoading();
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function prepareMaterial(originalMat) {
+            // Converte para MeshStandardMaterial para suportar mapas de textura, rugosidade e emissive highlight
+            const newMat = new THREE.MeshStandardMaterial({
+                name: originalMat.name || 'Material',
+                color: originalMat.color ? originalMat.color.clone() : new THREE.Color(0xcccccc),
+                roughness: state.materialRoughness,
+                metalness: 0.1,
+                map: originalMat.map || null
+            });
+
+            // Guarda estado inicial da textura original para o histórico
+            newMat.userData.originalMap = originalMat.map || null;
+            return newMat;
+        }
+
+        function fitCameraToObject(object) {
+            const box = new THREE.Box3().setFromObject(object);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.8;
+
+            cameraZ = Math.max(cameraZ, 10);
+
+            camera.position.set(center.x + cameraZ * 0.5, center.y + cameraZ * 0.4, center.z + cameraZ);
+            controls.target.copy(center);
+            camera.lookAt(center);
+            controls.update();
+        }
+
+        function disposeObject(obj) {
+            obj.traverse((child) => {
+                if (child.isMesh) {
+                    child.geometry.dispose();
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else if (child.material) {
+                        child.material.dispose();
+                    }
+                }
+            });
+        }
+
+        // --- GERENCIAMENTO DE TEXTURAS ---
+        function handleTextureUpload(files) {
+            if (!files || files.length === 0) return;
+
+            Array.from(files).forEach((file) => {
+                if (!file.type.startsWith('image/')) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const dataUrl = e.target.result;
+                    const loader = new THREE.TextureLoader();
+
+                    loader.load(dataUrl, (threeTexture) => {
+                        threeTexture.wrapS = THREE.RepeatWrapping;
+                        threeTexture.wrapT = THREE.RepeatWrapping;
+                        threeTexture.colorSpace = THREE.SRGBColorSpace;
+                        threeTexture.repeat.set(state.textureRepeat.u, state.textureRepeat.v);
+
+                        const textureObj = {
+                            id: 'tex_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                            name: file.name,
+                            dataUrl: dataUrl,
+                            textureThree: threeTexture
+                        };
+
+                        state.textures.push(textureObj);
+                        renderTextureGallery();
+
+                        // Seleciona automaticamente se for a primeira textura carregada
+                        if (state.textures.length === 1) {
+                            selectTexture(textureObj.id);
+                        }
+                    });
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function renderTextureGallery() {
+            textureGallery.innerHTML = '';
+            textureCount.textContent = state.textures.length;
+
+            if (state.textures.length === 0) {
+                textureEmptyState.classList.remove('hidden');
+                return;
+            }
+
+            textureEmptyState.classList.add('hidden');
+
+            state.textures.forEach((tex) => {
+                const card = document.createElement('div');
+                card.className = `group relative aspect-square bg-gray-900 border-2 rounded-xl overflow-hidden cursor-pointer transition transform hover:scale-[1.02] ${
+                    state.selectedTextureId === tex.id ? 'border-blue-500 active-texture-ring' : 'border-gray-700 hover:border-gray-500'
+                }`;
+
+                card.innerHTML = `
+                    <img src="${tex.dataUrl}" alt="${tex.name}" class="w-full h-full object-cover">
+                    <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-gray-950/90 to-transparent p-1.5 pt-4 text-[10px] text-gray-200 truncate">
+                        ${tex.name}
+                    </div>
+                    ${state.selectedTextureId === tex.id ? `
+                        <div class="absolute top-1.5 right-1.5 bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] shadow">
+                            <i class="fa-solid fa-check"></i>
+                        </div>
+                    ` : ''}
+                `;
+
+                card.addEventListener('click', () => selectTexture(tex.id));
+                textureGallery.appendChild(card);
+            });
+        }
+
+        function selectTexture(id) {
+            state.selectedTextureId = id;
+            renderTextureGallery();
+        }
+
+        function getSelectedTextureObj() {
+            return state.textures.find(t => t.id === state.selectedTextureId);
+        }
+
+        // --- RAYCASTING, HIGHLIGHT E SELEÇÃO DE MESH ---
+        function onPointerMove(event) {
+            if (!state.currentFBX) return;
+
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(state.meshes, false);
+
+            // Restaura emissive da mesh anteriormente hovered
+            if (state.hoveredMesh && state.hoveredMesh !== state.selectedMesh) {
+                resetMeshEmissive(state.hoveredMesh);
+                state.hoveredMesh = null;
+            }
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                if (hitMesh !== state.selectedMesh) {
+                    state.hoveredMesh = hitMesh;
+                }
+            }
+        }
+
+        function onPointerClick(event) {
+            if (!state.currentFBX) return;
+
+            // Ignora se o usuário estava apenas arrastando a câmera (OrbitControls)
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(state.meshes, false);
+
+            if (intersects.length > 0) {
+                const clickedMesh = intersects[0].object;
+                setSelectedMesh(clickedMesh);
+            }
+        }
+
+        function setSelectedMesh(mesh) {
+            // Remove destaque da mesh selecionada anterior
+            if (state.selectedMesh) {
+                resetMeshEmissive(state.selectedMesh);
+            }
+
+            state.selectedMesh = mesh;
+
+            if (mesh) {
+                // Aplica destaque de seleção (Emissive Verde)
+                if (mesh.material) {
+                    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                    mats.forEach(m => {
+                        if (m.emissive) {
+                            m.emissive.setHex(0x10b981);
+                            m.emissiveIntensity = 0.4;
+                        }
+                    });
+                }
+
+                // Exibe barra inferior com info da parte
+                selectedPartName.textContent = mesh.name || 'Parte Sem Nome';
+                selectedPartInfo.classList.remove('hidden');
+            } else {
+                selectedPartInfo.classList.add('hidden');
+            }
+        }
+
+        function clearSelection() {
+            if (state.selectedMesh) {
+                resetMeshEmissive(state.selectedMesh);
+                state.selectedMesh = null;
+            }
+            if (state.hoveredMesh) {
+                resetMeshEmissive(state.hoveredMesh);
+                state.hoveredMesh = null;
+            }
+            selectedPartInfo.classList.add('hidden');
+        }
+
+        function resetMeshEmissive(mesh) {
+            if (!mesh || !mesh.material) return;
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            mats.forEach(m => {
+                if (m.emissive) {
+                    m.emissive.setHex(0x000000);
+                    m.emissiveIntensity = 0;
+                }
+            });
+        }
+
+        // --- APLICAÇÃO DE TEXTURA & SISTEMA DE UNDO/REDO ---
+        function applyTextureToSelected() {
+            if (!state.selectedMesh) {
+                alert("Por favor, selecione uma parte do modelo 3D clicando nela primeiro.");
+                return;
+            }
+
+            const activeTexture = getSelectedTextureObj();
+            if (!activeTexture) {
+                alert("Por favor, selecione uma textura na galeria lateral.");
+                return;
+            }
+
+            const mesh = state.selectedMesh;
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+            // Salva estado para o Histórico (UNDO)
+            const previousMaps = materials.map(m => m.map || null);
+
+            // Aplica a nova textura
+            materials.forEach(m => {
+                m.map = activeTexture.textureThree.clone();
+                m.map.repeat.set(state.textureRepeat.u, state.textureRepeat.v);
+                m.map.needsUpdate = true;
+                m.roughness = state.materialRoughness;
+                m.needsUpdate = true;
+            });
+
+            // Adiciona comando ao histórico
+            pushHistory({
+                mesh: mesh,
+                previousMaps: previousMaps,
+                newMap: activeTexture.textureThree,
+                repeatU: state.textureRepeat.u,
+                repeatV: state.textureRepeat.v
+            });
+        }
+
+        function pushHistory(action) {
+            state.history.push(action);
+            state.redoStack = []; // Limpa refazer ao realizar nova ação
+            updateUndoRedoUI();
+        }
+
+        function undo() {
+            if (state.history.length === 0) return;
+
+            const action = state.history.pop();
+            state.redoStack.push(action);
+
+            const mesh = action.mesh;
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+            materials.forEach((m, idx) => {
+                m.map = action.previousMaps[idx];
+                m.needsUpdate = true;
+            });
+
+            updateUndoRedoUI();
+        }
+
+        function redo() {
+            if (state.redoStack.length === 0) return;
+
+            const action = state.redoStack.pop();
+            state.history.push(action);
+
+            const mesh = action.mesh;
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+            materials.forEach((m) => {
+                const newTex = action.newMap.clone();
+                newTex.repeat.set(action.repeatU, action.repeatV);
+                m.map = newTex;
+                m.needsUpdate = true;
+            });
+
+            updateUndoRedoUI();
+        }
+
+        function updateUndoRedoUI() {
+            btnUndo.disabled = state.history.length === 0;
+            btnRedo.disabled = state.redoStack.length === 0;
+        }
+
+        // --- EXPORTAÇÃO FBX COM TEXTURAS INCORPORADAS ---
+        async function exportFBXWithTextures() {
+            if (!state.currentFBX) {
+                alert('Carregue um modelo FBX antes de exportar.');
+                return;
+            }
+
+            const originalLabel = btnExportFBX.innerHTML;
+            btnExportFBX.disabled = true;
+            btnExportFBX.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Exportando...</span>';
+            showLoading('Preparando modelo, materiais e texturas para exportação...');
+
+            try {
+                // Exporta somente o modelo carregado, sem câmera, luzes ou elementos auxiliares da cena.
+                // parseAsync converte imagens carregadas pelo TextureLoader e embedTextures incorpora
+                // os arquivos de imagem no próprio FBX, evitando dependência de caminhos externos.
+                const exporter = new FBXExporter();
+                const bytes = await exporter.parseAsync(state.currentFBX, {
+                    preset: 'blender',
+                    embedTextures: true,
+                    includeAnimations: true
+                });
+
+                const blob = new Blob([bytes], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${state.currentFBXName || 'modelo'}_texturizado.fbx`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+                hideLoading();
+                alert('FBX exportado com as texturas incorporadas. Verifique a importação no programa 3D de destino.');
+            } catch (error) {
+                console.error('Erro ao exportar FBX:', error);
+                hideLoading();
+                alert('Não foi possível exportar o FBX. Consulte o console do navegador para ver os detalhes do erro.');
+            } finally {
+                btnExportFBX.disabled = !state.currentFBX;
+                btnExportFBX.innerHTML = originalLabel;
+            }
+        }
+
+        // --- UTILS & EVENT LISTENERS ---
+        function showLoading(msg) {
+            loadingText.textContent = msg || 'Carregando...';
+            loadingOverlay.classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            loadingOverlay.classList.add('hidden');
+        }
+
+        function setupEventListeners() {
+            // Importar FBX via Inputs
+            fbxFileInput.addEventListener('change', (e) => loadFBXFile(e.target.files[0]));
+            sidebarFbxInput.addEventListener('change', (e) => loadFBXFile(e.target.files[0]));
+
+            // Importar Texturas
+            textureFileInput.addEventListener('change', (e) => handleTextureUpload(e.target.files));
+
+            // Drag & Drop no Canvas/Window
+            window.addEventListener('dragover', (e) => e.preventDefault());
+            window.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const files = e.dataTransfer.files;
+                if (!files || files.length === 0) return;
+
+                const fbxFile = Array.from(files).find(f => f.name.toLowerCase().endsWith('.fbx'));
+                const imgFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+
+                if (fbxFile) loadFBXFile(fbxFile);
+                if (imgFiles.length > 0) handleTextureUpload(imgFiles);
+            });
+
+            // Raycasting Events
+            canvas.addEventListener('mousemove', onPointerMove);
+            canvas.addEventListener('click', onPointerClick);
+
+            // Botões de Ação
+            btnApplySelected.addEventListener('click', applyTextureToSelected);
+            btnExportFBX.addEventListener('click', exportFBXWithTextures);
+            btnUndo.addEventListener('click', undo);
+            btnRedo.addEventListener('click', redo);
+            btnResetView.addEventListener('click', () => {
+                if (state.currentFBX) fitCameraToObject(state.currentFBX);
+            });
+
+            // Atalhos de Teclado (Ctrl+Z / Ctrl+Y)
+            window.addEventListener('keydown', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    if (e.key.toLowerCase() === 'z') {
+                        if (e.shiftKey) redo();
+                        else undo();
+                    } else if (e.key.toLowerCase() === 'y') {
+                        redo();
+                    }
+                }
+            });
+
+            // Controles de Ajuste de Material / Repetição
+            repeatUInput.addEventListener('change', (e) => {
+                state.textureRepeat.u = parseFloat(e.target.value) || 1;
+                updateSelectedMeshTextureRepeat();
+            });
+
+            repeatVInput.addEventListener('change', (e) => {
+                state.textureRepeat.v = parseFloat(e.target.value) || 1;
+                updateSelectedMeshTextureRepeat();
+            });
+
+            roughnessSlider.addEventListener('input', (e) => {
+                state.materialRoughness = parseFloat(e.target.value);
+                if (state.selectedMesh) {
+                    const mats = Array.isArray(state.selectedMesh.material) ? state.selectedMesh.material : [state.selectedMesh.material];
+                    mats.forEach(m => m.roughness = state.materialRoughness);
+                }
+            });
+        }
+
+        function updateSelectedMeshTextureRepeat() {
+            if (!state.selectedMesh) return;
+            const mats = Array.isArray(state.selectedMesh.material) ? state.selectedMesh.material : [state.selectedMesh.material];
+            mats.forEach(m => {
+                if (m.map) {
+                    m.map.repeat.set(state.textureRepeat.u, state.textureRepeat.v);
+                    m.map.needsUpdate = true;
+                }
+            });
+        }
+
+        // --- INICIALIZAÇÃO ---
+        window.addEventListener('DOMContentLoaded', () => {
+            initThree();
+            setupEventListeners();
+        });
+    </script>
+</body>
+</html>
