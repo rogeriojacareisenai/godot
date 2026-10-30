@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Bone Rigging & Skinning Studio</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Three.js & Loaders / Controls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            user-select: none;
+            overflow: hidden;
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.88);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .tree-item-selected {
+            background-color: #2563eb !important;
+            color: #ffffff !important;
+        }
+        .cursor-add-bone {
+            cursor: crosshair !important;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col">
+
+    <!-- TOP TOOLBAR -->
+    <header class="h-14 glass-panel border-b border-slate-700/50 px-4 flex items-center justify-between z-20 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="bg-blue-600 p-2 rounded-lg text-white shadow-md shadow-blue-900/50">
+                <i class="fa-solid fa-bone text-lg"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-sm leading-tight flex items-center space-x-2">
+                    <span>RigStudio 3D</span>
+                    <span class="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30">v2.0</span>
+                </h1>
+                <p class="text-xs text-slate-400">Edição de Ossos, Gizmo Transform & Skinning</p>
+            </div>
+        </div>
+
+        <!-- Mode Toggle Switch -->
+        <div class="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-700/80 shadow-inner">
+            <button id="modeEditBtn" onclick="setAppMode('EDIT')" class="flex items-center space-x-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all bg-blue-600 text-white shadow-md">
+                <i class="fa-solid fa-pen-ruler"></i>
+                <span>Modo Edição de Rig</span>
+            </button>
+            <button id="modePoseBtn" onclick="setAppMode('POSE')" class="flex items-center space-x-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all text-slate-400 hover:text-white">
+                <i class="fa-solid fa-person-walking"></i>
+                <span>Modo Pose / Deformação</span>
+            </button>
+        </div>
+
+        <!-- File Upload & Actions -->
+        <div class="flex items-center space-x-2">
+            <label class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-2 shadow">
+                <i class="fa-solid fa-file-arrow-up text-blue-400"></i>
+                <span>Carregar 3D (.GLB / .FBX)</span>
+                <input type="file" id="fileInput" accept=".glb,.gltf,.fbx" class="hidden" onchange="handleFileUpload(event)">
+            </label>
+            <button onclick="bindSkinning()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-2 shadow-lg shadow-emerald-900/30">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>Vincular Malha (Bind)</span>
+            </button>
+            <button onclick="resetPose()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 px-3 py-1.5 rounded-lg text-xs font-medium transition" title="Resetar Pose">
+                <i class="fa-solid fa-rotate-left"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- MAIN WORKSPACE -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- LEFT SIDEBAR: RIG CONTROL & HIERARCHY -->
+        <aside class="w-80 glass-panel border-r border-slate-700/50 flex flex-col z-10 shrink-0">
+            
+            <!-- Sample Models -->
+            <div class="p-3 border-b border-slate-700/50 bg-slate-900/40">
+                <label class="text-xs text-slate-400 font-medium block mb-1">Modelo Primitivo:</label>
+                <select id="sampleModelSelect" onchange="loadSampleModel(this.value)" class="w-full bg-slate-800 border border-slate-700 text-xs rounded-lg p-2 text-slate-200 focus:outline-none focus:border-blue-500">
+                    <option value="cylinder">Cilindro Tubular Segmentado</option>
+                    <option value="humanoid">Manequim Humanoide</option>
+                    <option value="dragon">Serpente / Cauda</option>
+                </select>
+            </div>
+
+            <!-- Transform Mode Gizmo Selector -->
+            <div class="p-3 border-b border-slate-700/50 bg-slate-900/20">
+                <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Gizmo 3D (Atalhos: T / R / S)</span>
+                <div class="grid grid-cols-3 gap-1.5">
+                    <button id="btnGizmoTranslate" onclick="setGizmoMode('translate')" class="bg-blue-600 text-white text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1">
+                        <i class="fa-solid fa-arrows-up-down-left-right"></i>
+                        <span>Mover</span>
+                    </button>
+                    <button id="btnGizmoRotate" onclick="setGizmoMode('rotate')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1">
+                        <i class="fa-solid fa-rotate"></i>
+                        <span>Rotacionar</span>
+                    </button>
+                    <button id="btnGizmoScale" onclick="setGizmoMode('scale')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1">
+                        <i class="fa-solid fa-expand"></i>
+                        <span>Escalar</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Rig Actions Panel -->
+            <div id="editRigActions" class="p-3 border-b border-slate-700/50 space-y-2">
+                <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Adicionar e Excluir Ossos</span>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="enableAddBoneMode('ROOT')" id="addRootBtn" class="bg-slate-800 hover:bg-blue-600 border border-slate-700 text-xs py-2 px-2 rounded-lg font-medium transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-plus text-blue-400"></i>
+                        <span>Osso Raiz</span>
+                    </button>
+                    <button onclick="enableAddBoneMode('CHILD')" id="addChildBtn" class="bg-slate-800 hover:bg-blue-600 border border-slate-700 text-xs py-2 px-2 rounded-lg font-medium transition flex items-center justify-center space-x-1.5">
+                        <i class="fa-solid fa-sitemap text-indigo-400"></i>
+                        <span>Osso Filho</span>
+                    </button>
+                </div>
+                <button onclick="deleteSelectedBone()" class="w-full bg-rose-950/40 hover:bg-rose-600 border border-rose-800/60 text-rose-300 hover:text-white text-xs py-2 px-2 rounded-lg font-medium transition flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-trash-can"></i>
+                    <span>Excluir Osso Selecionado</span>
+                </button>
+            </div>
+
+            <!-- Hierarchy Tree Header -->
+            <div class="px-3 py-2 bg-slate-900/60 border-b border-slate-700/50 flex justify-between items-center">
+                <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Hierarquia do Esqueleto</span>
+                <span id="boneCountBadge" class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-slate-700">0 ossos</span>
+            </div>
+
+            <!-- Tree View Scroll Container -->
+            <div class="flex-1 overflow-y-auto p-2" id="hierarchyTree">
+                <!-- Tree populated dynamically -->
+            </div>
+
+            <!-- Display Options -->
+            <div class="p-3 border-t border-slate-700/50 bg-slate-900/40 space-y-2 text-xs">
+                <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Opções de Visualização</span>
+                <label class="flex items-center space-x-2 cursor-pointer text-slate-300">
+                    <input type="checkbox" id="chkShowSkeleton" checked onchange="toggleSkeletonOverlay(this.checked)" class="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0">
+                    <span>Exibir Esqueleto / Conectores</span>
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer text-slate-300">
+                    <input type="checkbox" id="chkShowRadius" checked onchange="toggleRadiusHelpers(this.checked)" class="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0">
+                    <span>Área de Atuação (Esfera de Raio)</span>
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer text-slate-300">
+                    <input type="checkbox" id="chkHeatmap" onchange="toggleHeatmap(this.checked)" class="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0">
+                    <span>Mapa de Calor (Pesos por Osso)</span>
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer text-slate-300">
+                    <input type="checkbox" id="chkWireframe" onchange="toggleWireframe(this.checked)" class="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0">
+                    <span>Malha Wireframe</span>
+                </label>
+            </div>
+        </aside>
+
+        <!-- 3D VIEWPORT CANVAS -->
+        <main class="flex-1 relative bg-slate-950 overflow-hidden">
+            <div id="canvasContainer" class="w-full h-full"></div>
+
+            <!-- Top Viewport Banners -->
+            <div class="absolute top-4 left-4 pointer-events-none z-10 flex flex-col space-y-2">
+                <div id="modeStatusBadge" class="bg-slate-900/90 border border-blue-500/50 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-400 backdrop-blur shadow-lg flex items-center space-x-2">
+                    <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                    <span id="modeStatusText">Modo Edição: Clique para Selecionar, Mover ou Adicionar Ossos</span>
+                </div>
+                <div id="clickInstruction" class="hidden bg-amber-500 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs backdrop-blur shadow-lg animate-bounce">
+                    <i class="fa-solid fa-crosshairs mr-1"></i> Clique na malha 3D para posicionar o osso!
+                </div>
+            </div>
+
+            <!-- FLOATING PROPERTIES PANEL (RIGHT) -->
+            <div id="propertiesPanel" class="absolute top-4 right-4 w-72 glass-panel rounded-xl p-4 shadow-2xl z-10 hidden space-y-3">
+                <div class="flex items-center justify-between border-b border-slate-700/60 pb-2">
+                    <div class="flex items-center space-x-2">
+                        <i class="fa-solid fa-bone text-blue-400 text-xs"></i>
+                        <input type="text" id="propBoneName" onchange="updateSelectedBoneName(this.value)" class="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs font-semibold text-white focus:outline-none focus:border-blue-500 w-36">
+                    </div>
+                    <button onclick="deselectBone()" class="text-slate-400 hover:text-slate-200"><i class="fa-solid fa-xmark text-sm"></i></button>
+                </div>
+
+                <!-- Influence Radius Slider -->
+                <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/40 space-y-1.5">
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="font-medium text-slate-300">Raio de Atuação (AoE):</span>
+                        <span id="lblRadiusVal" class="text-blue-400 font-bold">1.5m</span>
+                    </div>
+                    <input type="range" id="propRadius" min="0.1" max="10.0" step="0.1" value="1.5" oninput="updateBoneRadius(this.value)" class="w-full accent-blue-500 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+                    <p class="text-[10px] text-slate-400">Alcance do osso para cálculo de deformação da malha.</p>
+                </div>
+
+                <!-- Position Coordinates -->
+                <div class="space-y-1">
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Posição (X, Y, Z)</span>
+                    <div class="grid grid-cols-3 gap-1">
+                        <div>
+                            <span class="text-[9px] text-rose-400 font-bold">X</span>
+                            <input type="number" step="0.1" id="posX" onchange="updateBoneTransformFromInputs()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-center text-white">
+                        </div>
+                        <div>
+                            <span class="text-[9px] text-emerald-400 font-bold">Y</span>
+                            <input type="number" step="0.1" id="posY" onchange="updateBoneTransformFromInputs()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-center text-white">
+                        </div>
+                        <div>
+                            <span class="text-[9px] text-blue-400 font-bold">Z</span>
+                            <input type="number" step="0.1" id="posZ" onchange="updateBoneTransformFromInputs()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-center text-white">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rotation Angles -->
+                <div class="space-y-1">
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Rotação (Graus)</span>
+                    <div class="grid grid-cols-3 gap-1">
+                        <div>
+                            <span class="text-[9px] text-rose-400 font-bold">RX</span>
+                            <input type="number" step="1" id="rotX" onchange="updateBoneTransformFromInputs()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-center text-white">
+                        </div>
+                        <div>
+                            <span class="text-[9px] text-emerald-400 font-bold">RY</span>
+                            <input type="number" step="1" id="rotY" onchange="updateBoneTransformFromInputs()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-center text-white">
+                        </div>
+                        <div>
+                            <span class="text-[9px] text-blue-400 font-bold">RZ</span>
+                            <input type="number" step="1" id="rotZ" onchange="updateBoneTransformFromInputs()" class="w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-center text-white">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scale / Length Controls -->
+                <div class="space-y-1">
+                    <div class="flex justify-between text-[11px] font-bold text-slate-400 uppercase">
+                        <span>Escala</span>
+                        <span id="lblScaleVal" class="text-blue-400">1.0</span>
+                    </div>
+                    <input type="range" min="0.1" max="3.0" step="0.05" value="1.0" id="propScale" oninput="updateBoneTransformFromInputs()" class="w-full accent-indigo-500 h-1 bg-slate-700 rounded appearance-none">
+                </div>
+            </div>
+
+            <!-- VIEWPORT FOOTER / HELPER INFO -->
+            <footer class="absolute bottom-3 left-4 right-4 pointer-events-none flex justify-between items-center text-[11px] text-slate-400">
+                <div class="glass-panel px-3 py-1.5 rounded-lg flex items-center space-x-4">
+                    <span><i class="fa-solid fa-arrow-pointer text-slate-500 mr-1"></i> Clique: Selecionar Osso</span>
+                    <span><i class="fa-solid fa-arrows-spin text-slate-500 mr-1"></i> Botão Direito: Orbitar Câmera</span>
+                </div>
+                <div id="bindingStatus" class="glass-panel px-3 py-1.5 rounded-lg text-emerald-400 font-medium">
+                    <i class="fa-solid fa-circle-check mr-1"></i> Sistema pronto.
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- APPLICATION LOGIC -->
+    <script>
+        // --- GLOBAL APP STATE ---
+        let scene, camera, renderer, controls, transformControls;
+        let raycaster, mouse;
+        
+        let targetMesh = null;            
+        let originalGeometryBackup = null; 
+        let skeletonBones = [];           
+        let boneIdCounter = 1;
+        let selectedBone = null;
+        
+        let appMode = 'EDIT';              // 'EDIT' or 'POSE'
+        let addBonePending = null;         // null, 'ROOT', or 'CHILD'
+        let isBoundToMesh = false;         
+        let isTransformingFromGizmo = false;
+
+        // Visual Helpers
+        let radiusHelpersMap = new Map();  
+        let jointVisualsMap = new Map();   
+        let boneCylindersGroup;            
+        let heatmapMaterial = null;
+        let originalMaterial = null;
+
+        let config = {
+            showSkeleton: true,
+            showRadius: true,
+            heatmapMode: false,
+            wireframe: false
+        };
+
+        // --- INITIALIZE THREE.JS ENVIRONMENT ---
+        function initApp() {
+            const container = document.getElementById('canvasContainer');
+            
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a);
+            scene.fog = new THREE.FogExp2(0x0f172a, 0.015);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(0, 4, 10);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Orbit Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.target.set(0, 2, 0);
+
+            // Transform Controls (3D Gizmo for Translate, Rotate, Scale)
+            transformControls = new THREE.TransformControls(camera, renderer.domElement);
+            transformControls.size = 0.85;
+            scene.add(transformControls);
+
+            // Disable Orbit Controls when dragging gizmo handles
+            transformControls.addEventListener('dragging-changed', function (event) {
+                controls.enabled = !event.value;
+                isTransformingFromGizmo = event.value;
+            });
+
+            // Update bone data continuously while dragging Gizmo
+            transformControls.addEventListener('change', function () {
+                if (selectedBone && isTransformingFromGizmo) {
+                    const handle = jointVisualsMap.get(selectedBone);
+                    if (handle) {
+                        if (transformControls.mode === 'translate') {
+                            if (selectedBone.parent) {
+                                // Convert world back to parent local space
+                                const invParent = new THREE.Matrix4().copy(selectedBone.parent.worldMatrix).invert();
+                                selectedBone.position.copy(handle.position).applyMatrix4(invParent);
+                            } else {
+                                selectedBone.position.copy(handle.position);
+                            }
+                        } else if (transformControls.mode === 'rotate') {
+                            selectedBone.rotation.copy(handle.rotation);
+                        } else if (transformControls.mode === 'scale') {
+                            selectedBone.scale = handle.scale.x;
+                        }
+                        updateBoneWorldTransforms();
+                        updatePropertiesPanelInputs();
+                    }
+                }
+            });
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(10, 20, 15);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            const fillLight = new THREE.DirectionalLight(0x3b82f6, 0.4);
+            fillLight.position.set(-10, 10, -10);
+            scene.add(fillLight);
+
+            // Grid Helper
+            const gridHelper = new THREE.GridHelper(30, 30, 0x3b82f6, 0x334155);
+            gridHelper.position.y = -0.01;
+            scene.add(gridHelper);
+
+            // Visual Connectors Group
+            boneCylindersGroup = new THREE.Group();
+            scene.add(boneCylindersGroup);
+
+            // Raycaster
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
+            window.addEventListener('keydown', onKeyDown);
+
+            // Default Model
+            loadSampleModel('cylinder');
+
+            // Render loop
+            animate();
+        }
+
+        // --- GIZMO MODE SELECTOR ---
+        function setGizmoMode(mode) {
+            if (transformControls) {
+                transformControls.setMode(mode);
+            }
+            document.getElementById('btnGizmoTranslate').className = mode === 'translate' ? "bg-blue-600 text-white text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1" : "bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1";
+            document.getElementById('btnGizmoRotate').className = mode === 'rotate' ? "bg-blue-600 text-white text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1" : "bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1";
+            document.getElementById('btnGizmoScale').className = mode === 'scale' ? "bg-blue-600 text-white text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1" : "bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-1.5 rounded-lg font-medium transition flex items-center justify-center space-x-1";
+        }
+
+        function onKeyDown(e) {
+            if (e.target.tagName === 'INPUT') return;
+            if (e.key === 't' || e.key === 'T') setGizmoMode('translate');
+            if (e.key === 'r' || e.key === 'R') setGizmoMode('rotate');
+            if (e.key === 's' || e.key === 'S') setGizmoMode('scale');
+            if (e.key === 'Escape') deselectBone();
+        }
+
+        // --- SAMPLE MODEL LOADERS ---
+        function loadSampleModel(type) {
+            if (targetMesh) {
+                scene.remove(targetMesh);
+                if (targetMesh.geometry) targetMesh.geometry.dispose();
+            }
+            clearSkeleton();
+
+            let geom;
+            if (type === 'cylinder') {
+                geom = new THREE.CylinderGeometry(0.8, 0.8, 6, 24, 32);
+                geom.translate(0, 3, 0);
+            } else if (type === 'humanoid') {
+                const head = new THREE.SphereGeometry(0.7, 16, 16); head.translate(0, 5.2, 0);
+                const torso = new THREE.CylinderGeometry(0.9, 0.6, 2.5, 16, 16); torso.translate(0, 3.2, 0);
+                const armL = new THREE.CylinderGeometry(0.25, 0.2, 2.2, 12, 12); armL.rotateZ(Math.PI / 3); armL.translate(1.4, 3.8, 0);
+                const armR = new THREE.CylinderGeometry(0.25, 0.2, 2.2, 12, 12); armR.rotateZ(-Math.PI / 3); armR.translate(-1.4, 3.8, 0);
+                const legL = new THREE.CylinderGeometry(0.3, 0.2, 2.5, 12, 12); legL.translate(0.5, 1.25, 0);
+                const legR = new THREE.CylinderGeometry(0.3, 0.2, 2.5, 12, 12); legR.translate(-0.5, 1.25, 0);
+
+                geom = THREE.BufferGeometryUtils ? THREE.BufferGeometryUtils.mergeBufferGeometries([head, torso, armL, armR, legL, legR]) : head;
+            } else if (type === 'dragon') {
+                geom = new THREE.CylinderGeometry(0.6, 0.2, 8, 16, 40);
+                geom.rotateZ(Math.PI / 2);
+                geom.translate(4, 0.5, 0);
+            }
+
+            geom.computeVertexNormals();
+
+            originalMaterial = new THREE.MeshStandardMaterial({
+                color: 0x94a3b8,
+                roughness: 0.4,
+                metalness: 0.1,
+                side: THREE.DoubleSide
+            });
+
+            targetMesh = new THREE.Mesh(geom, originalMaterial);
+            targetMesh.castShadow = true;
+            targetMesh.receiveShadow = true;
+            scene.add(targetMesh);
+
+            cacheOriginalGeometry();
+
+            if (type === 'cylinder') {
+                createDefaultCylinderSkeleton();
+            }
+
+            updateStatus("Modelo primitivo '" + type + "' carregado.");
+        }
+
+        // --- ROBUST FILE UPLOAD HANDLER (.GLB / .GLTF / .FBX) ---
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const filename = file.name.toLowerCase();
+            const blobUrl = URL.createObjectURL(file);
+
+            updateStatus("Carregando arquivo 3D " + file.name + "...");
+
+            if (filename.endsWith('.glb') || filename.endsWith('.gltf')) {
+                const loader = new THREE.GLTFLoader();
+                loader.load(blobUrl, (gltf) => {
+                    processImported3DObject(gltf.scene);
+                    URL.revokeObjectURL(blobUrl);
+                }, undefined, (err) => {
+                    alert("Erro ao carregar arquivo GLB/GLTF: " + err.message);
+                    URL.revokeObjectURL(blobUrl);
+                });
+            } else if (filename.endsWith('.fbx')) {
+                const loader = new THREE.FBXLoader();
+                loader.load(blobUrl, (object) => {
+                    processImported3DObject(object);
+                    URL.revokeObjectURL(blobUrl);
+                }, undefined, (err) => {
+                    alert("Erro ao carregar arquivo FBX: " + err.message);
+                    URL.revokeObjectURL(blobUrl);
+                });
+            }
+        }
+
+        function processImported3DObject(importedScene) {
+            if (targetMesh) scene.remove(targetMesh);
+            clearSkeleton();
+
+            let collectedGeometries = [];
+
+            importedScene.traverse((child) => {
+                if (child.isMesh && child.geometry) {
+                    const clonedGeom = child.geometry.clone();
+                    clonedGeom.applyMatrix4(child.matrixWorld);
+                    collectedGeometries.push(clonedGeom);
+                }
+            });
+
+            if (collectedGeometries.length === 0) {
+                alert("Nenhuma geometria válida foi encontrada no modelo 3D.");
+                return;
+            }
+
+            let mergedGeom;
+            if (collectedGeometries.length === 1) {
+                mergedGeom = collectedGeometries[0];
+            } else {
+                mergedGeom = THREE.BufferGeometryUtils ? THREE.BufferGeometryUtils.mergeBufferGeometries(collectedGeometries, false) : collectedGeometries[0];
+            }
+
+            // Ensure geometry is non-indexed for simple per-vertex skin deformation
+            if (mergedGeom.index) {
+                mergedGeom = mergedGeom.toNonIndexed();
+            }
+
+            // Center & Scale Model Automatically
+            mergedGeom.computeBoundingBox();
+            const bbox = mergedGeom.boundingBox;
+            const center = new THREE.Vector3();
+            bbox.getCenter(center);
+            mergedGeom.translate(-center.x, -bbox.min.y, -center.z); // Center on floor
+
+            mergedGeom.computeBoundingBox();
+            const size = new THREE.Vector3();
+            mergedGeom.boundingBox.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z);
+            if (maxDim > 0) {
+                const scaleFactor = 6.0 / maxDim; // Scale to fit around 6 units high
+                mergedGeom.scale(scaleFactor, scaleFactor, scaleFactor);
+            }
+
+            mergedGeom.computeVertexNormals();
+
+            originalMaterial = new THREE.MeshStandardMaterial({
+                color: 0x94a3b8,
+                roughness: 0.5,
+                metalness: 0.1,
+                side: THREE.DoubleSide
+            });
+
+            targetMesh = new THREE.Mesh(mergedGeom, originalMaterial);
+            targetMesh.castShadow = true;
+            targetMesh.receiveShadow = true;
+            scene.add(targetMesh);
+
+            cacheOriginalGeometry();
+
+            controls.target.set(0, 3, 0);
+            camera.position.set(0, 4, 10);
+
+            updateStatus("Modelo 3D importado e pronto para rigging!");
+        }
+
+        function cacheOriginalGeometry() {
+            if (!targetMesh) return;
+            const posAttr = targetMesh.geometry.attributes.position;
+            originalGeometryBackup = new Float32Array(posAttr.array.length);
+            originalGeometryBackup.set(posAttr.array);
+
+            const vertexCount = posAttr.count;
+            targetMesh.geometry.userData.skinWeights = [];
+            for (let i = 0; i < vertexCount; i++) {
+                targetMesh.geometry.userData.skinWeights.push([]);
+            }
+            isBoundToMesh = false;
+        }
+
+        function createDefaultCylinderSkeleton() {
+            const b1 = createBone("Osso_Base", new THREE.Vector3(0, 0.2, 0), null, 2.0);
+            const b2 = createBone("Osso_Meio", new THREE.Vector3(0, 2.2, 0), b1, 2.0);
+            const b3 = createBone("Osso_Topo", new THREE.Vector3(0, 4.2, 0), b2, 2.0);
+            rebuildHierarchyTree();
+            bindSkinning();
+        }
+
+        // --- BONE DATA MODEL & CREATION ---
+        function createBone(name, localPosition, parentBone = null, influenceRadius = 1.8) {
+            const bone = {
+                id: 'bone_' + (boneIdCounter++),
+                name: name || ('Osso_' + boneIdCounter),
+                position: localPosition.clone(),
+                rotation: new THREE.Euler(0, 0, 0),
+                scale: 1.0,
+                influenceRadius: influenceRadius,
+                parent: parentBone,
+                children: [],
+                worldPosition: new THREE.Vector3(),
+                worldMatrix: new THREE.Matrix4(),
+                bindMatrixInverse: new THREE.Matrix4()
+            };
+
+            if (parentBone) {
+                parentBone.children.push(bone);
+            }
+            skeletonBones.push(bone);
+
+            // Joint Handle (Sphere Mesh)
+            const handleGeom = new THREE.SphereGeometry(0.18, 16, 16);
+            const handleMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, depthTest: false });
+            const handleMesh = new THREE.Mesh(handleGeom, handleMat);
+            handleMesh.renderOrder = 999;
+            handleMesh.userData = { boneRef: bone };
+            scene.add(handleMesh);
+            jointVisualsMap.set(bone, handleMesh);
+
+            // Influence Radius Sphere Helper
+            const radGeom = new THREE.SphereGeometry(influenceRadius, 16, 12);
+            const radMat = new THREE.MeshBasicMaterial({ color: 0x60a5fa, wireframe: true, transparent: true, opacity: 0.15 });
+            const radMesh = new THREE.Mesh(radGeom, radMat);
+            scene.add(radMesh);
+            radiusHelpersMap.set(bone, radMesh);
+
+            updateBoneWorldTransforms();
+            rebuildHierarchyTree();
+            selectBone(bone);
+
+            return bone;
+        }
+
+        function updateBoneWorldTransforms() {
+            const roots = skeletonBones.filter(b => !b.parent);
+            
+            function recurse(bone, parentMatrix) {
+                const localMat = new THREE.Matrix4();
+                const quat = new THREE.Quaternion().setFromEuler(bone.rotation);
+                const sc = new THREE.Vector3(bone.scale, bone.scale, bone.scale);
+                localMat.compose(bone.position, quat, sc);
+
+                if (parentMatrix) {
+                    bone.worldMatrix.multiplyMatrices(parentMatrix, localMat);
+                } else {
+                    bone.worldMatrix.copy(localMat);
+                }
+
+                bone.worldPosition.setFromMatrixPosition(bone.worldMatrix);
+
+                // Update Joint Handle Position
+                const handle = jointVisualsMap.get(bone);
+                if (handle) {
+                    handle.position.copy(bone.worldPosition);
+                    handle.rotation.copy(bone.rotation);
+                    handle.scale.setScalar(bone.scale);
+                }
+
+                // Update Radius Helper
+                const radMesh = radiusHelpersMap.get(bone);
+                if (radMesh) {
+                    radMesh.position.copy(bone.worldPosition);
+                    radMesh.scale.setScalar(bone.influenceRadius);
+                    radMesh.visible = config.showRadius && (selectedBone === bone);
+                }
+
+                bone.children.forEach(child => recurse(child, bone.worldMatrix));
+            }
+
+            roots.forEach(root => recurse(root, null));
+            updateBoneCylinders();
+
+            if (isBoundToMesh) {
+                deformMeshRealtime();
+            }
+        }
+
+        function updateBoneCylinders() {
+            while (boneCylindersGroup.children.length > 0) {
+                const child = boneCylindersGroup.children[0];
+                boneCylindersGroup.remove(child);
+                if (child.geometry) child.geometry.dispose();
+            }
+
+            if (!config.showSkeleton) return;
+
+            skeletonBones.forEach(bone => {
+                if (bone.parent) {
+                    const start = bone.parent.worldPosition;
+                    const end = bone.worldPosition;
+                    const distance = start.distanceTo(end);
+
+                    if (distance > 0.01) {
+                        const geom = new THREE.ConeGeometry(0.12, distance, 6);
+                        geom.translate(0, distance / 2, 0);
+                        geom.rotateX(Math.PI / 2);
+
+                        const isSelected = (selectedBone === bone || selectedBone === bone.parent);
+                        const mat = new THREE.MeshBasicMaterial({
+                            color: isSelected ? 0xf59e0b : 0x38bdf8,
+                            wireframe: true,
+                            depthTest: false
+                        });
+
+                        const mesh = new THREE.Mesh(geom, mat);
+                        mesh.position.copy(start);
+                        mesh.lookAt(end);
+                        mesh.renderOrder = 998;
+                        boneCylindersGroup.add(mesh);
+                    }
+                }
+            });
+        }
+
+        // --- BONE SELECTION & TRANSFORMS ---
+        function selectBone(bone) {
+            selectedBone = bone;
+
+            jointVisualsMap.forEach((mesh, b) => {
+                if (b === selectedBone) {
+                    mesh.material.color.setHex(0xf59e0b); // Highlight Amber
+                    transformControls.attach(mesh);
+                } else {
+                    mesh.material.color.setHex(0x3b82f6); // Default Blue
+                }
+            });
+
+            if (!selectedBone) {
+                transformControls.detach();
+                document.getElementById('propertiesPanel').classList.add('hidden');
+            } else {
+                document.getElementById('propertiesPanel').classList.remove('hidden');
+                updatePropertiesPanelInputs();
+            }
+
+            updateBoneWorldTransforms();
+            highlightHierarchyTreeItem();
+
+            if (config.heatmapMode && isBoundToMesh) {
+                updateHeatmapColors();
+            }
+        }
+
+        function deselectBone() {
+            selectBone(null);
+        }
+
+        function updatePropertiesPanelInputs() {
+            if (!selectedBone) return;
+            document.getElementById('propBoneName').value = selectedBone.name;
+            document.getElementById('propRadius').value = selectedBone.influenceRadius;
+            document.getElementById('lblRadiusVal').innerText = selectedBone.influenceRadius.toFixed(1) + 'm';
+
+            document.getElementById('posX').value = selectedBone.position.x.toFixed(2);
+            document.getElementById('posY').value = selectedBone.position.y.toFixed(2);
+            document.getElementById('posZ').value = selectedBone.position.z.toFixed(2);
+
+            document.getElementById('rotX').value = THREE.MathUtils.radToDeg(selectedBone.rotation.x).toFixed(0);
+            document.getElementById('rotY').value = THREE.MathUtils.radToDeg(selectedBone.rotation.y).toFixed(0);
+            document.getElementById('rotZ').value = THREE.MathUtils.radToDeg(selectedBone.rotation.z).toFixed(0);
+
+            document.getElementById('propScale').value = selectedBone.scale;
+            document.getElementById('lblScaleVal').innerText = selectedBone.scale.toFixed(2);
+        }
+
+        function updateBoneTransformFromInputs() {
+            if (!selectedBone) return;
+
+            selectedBone.position.x = parseFloat(document.getElementById('posX').value) || 0;
+            selectedBone.position.y = parseFloat(document.getElementById('posY').value) || 0;
+            selectedBone.position.z = parseFloat(document.getElementById('posZ').value) || 0;
+
+            const rx = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotX').value) || 0);
+            const ry = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotY').value) || 0);
+            const rz = THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotZ').value) || 0);
+            selectedBone.rotation.set(rx, ry, rz);
+
+            selectedBone.scale = parseFloat(document.getElementById('propScale').value) || 1.0;
+
+            updateBoneWorldTransforms();
+        }
+
+        function updateBoneRadius(val) {
+            if (!selectedBone) return;
+            selectedBone.influenceRadius = parseFloat(val);
+            document.getElementById('lblRadiusVal').innerText = selectedBone.influenceRadius.toFixed(1) + 'm';
+            updateBoneWorldTransforms();
+        }
+
+        function updateSelectedBoneName(name) {
+            if (!selectedBone) return;
+            selectedBone.name = name;
+            rebuildHierarchyTree();
+        }
+
+        function deleteSelectedBone() {
+            if (!selectedBone) return;
+
+            const boneToDelete = selectedBone;
+
+            function removeRecursive(b) {
+                b.children.forEach(c => removeRecursive(c));
+
+                const h = jointVisualsMap.get(b);
+                if (h) { scene.remove(h); jointVisualsMap.delete(b); }
+                const r = radiusHelpersMap.get(b);
+                if (r) { scene.remove(r); radiusHelpersMap.delete(b); }
+
+                if (b.parent) {
+                    b.parent.children = b.parent.children.filter(child => child !== b);
+                }
+
+                skeletonBones = skeletonBones.filter(item => item !== b);
+            }
+
+            removeRecursive(boneToDelete);
+            deselectBone();
+            rebuildHierarchyTree();
+            updateBoneWorldTransforms();
+            updateStatus("Osso excluído.");
+        }
+
+        function clearSkeleton() {
+            skeletonBones.forEach(b => {
+                const h = jointVisualsMap.get(b);
+                if (h) scene.remove(h);
+                const r = radiusHelpersMap.get(b);
+                if (r) scene.remove(r);
+            });
+            jointVisualsMap.clear();
+            radiusHelpersMap.clear();
+            skeletonBones = [];
+            deselectBone();
+            rebuildHierarchyTree();
+            updateBoneWorldTransforms();
+        }
+
+        // --- MOUSE CANVAS INTERACTION ---
+        function enableAddBoneMode(type) {
+            if (type === 'CHILD' && !selectedBone) {
+                alert("Selecione um osso existente para ser o pai do novo osso!");
+                return;
+            }
+            addBonePending = type;
+            document.getElementById('clickInstruction').classList.remove('hidden');
+            renderer.domElement.classList.add('cursor-add-bone');
+        }
+
+        function onCanvasPointerDown(event) {
+            if (event.button !== 0 || isTransformingFromGizmo) return;
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            // Add Bone Mode
+            if (addBonePending) {
+                let spawnPos = new THREE.Vector3();
+                const meshIntersects = raycaster.intersectObject(targetMesh);
+                if (meshIntersects.length > 0) {
+                    spawnPos.copy(meshIntersects[0].point);
+                } else {
+                    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+                    raycaster.ray.intersectPlane(plane, spawnPos);
+                }
+
+                if (addBonePending === 'ROOT') {
+                    createBone("Osso_Raiz", spawnPos, null);
+                } else if (addBonePending === 'CHILD' && selectedBone) {
+                    const invParent = new THREE.Matrix4().copy(selectedBone.worldMatrix).invert();
+                    const localPos = spawnPos.clone().applyMatrix4(invParent);
+                    createBone("Osso_Filho", localPos, selectedBone);
+                }
+
+                addBonePending = null;
+                document.getElementById('clickInstruction').classList.add('hidden');
+                renderer.domElement.classList.remove('cursor-add-bone');
+                return;
+            }
+
+            // Select Bone Handle Raycast
+            const jointMeshes = Array.from(jointVisualsMap.values());
+            const jointHits = raycaster.intersectObjects(jointMeshes);
+
+            if (jointHits.length > 0) {
+                const clickedBone = jointHits[0].object.userData.boneRef;
+                selectBone(clickedBone);
+            }
+        }
+
+        // --- WEIGHT BINDING & REALTIME SKINNING DEFORMATION ---
+        function bindSkinning() {
+            if (!targetMesh || skeletonBones.length === 0) {
+                alert("É necessário ter uma malha 3D e pelo menos 1 osso para realizar o vínculo!");
+                return;
+            }
+
+            updateBoneWorldTransforms();
+            skeletonBones.forEach(bone => {
+                bone.bindMatrixInverse.copy(bone.worldMatrix).invert();
+            });
+
+            const posAttr = targetMesh.geometry.attributes.position;
+            const vertexCount = posAttr.count;
+            const vPos = new THREE.Vector3();
+
+            targetMesh.geometry.userData.skinWeights = [];
+
+            for (let i = 0; i < vertexCount; i++) {
+                vPos.fromBufferAttribute(posAttr, i);
+
+                let vertexWeights = [];
+                let totalWeight = 0;
+
+                skeletonBones.forEach(bone => {
+                    const dist = vPos.distanceTo(bone.worldPosition);
+
+                    if (dist <= bone.influenceRadius) {
+                        const normalizedDist = dist / bone.influenceRadius;
+                        const weight = Math.pow(Math.max(0, 1 - normalizedDist), 2);
+
+                        if (weight > 0.001) {
+                            vertexWeights.push({ bone: bone, weight: weight });
+                            totalWeight += weight;
+                        }
+                    }
+                });
+
+                if (totalWeight > 0) {
+                    vertexWeights.forEach(w => w.weight /= totalWeight);
+                } else {
+                    let closestBone = null;
+                    let minDist = Infinity;
+                    skeletonBones.forEach(b => {
+                        const d = vPos.distanceTo(b.worldPosition);
+                        if (d < minDist) { minDist = d; closestBone = b; }
+                    });
+                    if (closestBone) {
+                        vertexWeights.push({ bone: closestBone, weight: 1.0 });
+                    }
+                }
+
+                targetMesh.geometry.userData.skinWeights.push(vertexWeights);
+            }
+
+            isBoundToMesh = true;
+            updateStatus("Vínculo de pele recalculado (" + vertexCount + " vértices).");
+
+            if (config.heatmapMode) {
+                updateHeatmapColors();
+            }
+        }
+
+        function deformMeshRealtime() {
+            if (!targetMesh || !isBoundToMesh || !originalGeometryBackup) return;
+
+            const posAttr = targetMesh.geometry.attributes.position;
+            const vertexCount = posAttr.count;
+            const skinWeights = targetMesh.geometry.userData.skinWeights;
+
+            const origPos = new THREE.Vector3();
+            const transformedPos = new THREE.Vector3();
+            const tempVec = new THREE.Vector3();
+            const skinMatrix = new THREE.Matrix4();
+
+            for (let i = 0; i < vertexCount; i++) {
+                origPos.set(
+                    originalGeometryBackup[i * 3],
+                    originalGeometryBackup[i * 3 + 1],
+                    originalGeometryBackup[i * 3 + 2]
+                );
+
+                transformedPos.set(0, 0, 0);
+                const weights = skinWeights[i];
+
+                if (weights && weights.length > 0) {
+                    weights.forEach(w => {
+                        skinMatrix.multiplyMatrices(w.bone.worldMatrix, w.bone.bindMatrixInverse);
+                        tempVec.copy(origPos).applyMatrix4(skinMatrix);
+                        tempVec.multiplyScalar(w.weight);
+                        transformedPos.add(tempVec);
+                    });
+                } else {
+                    transformedPos.copy(origPos);
+                }
+
+                posAttr.setXYZ(i, transformedPos.x, transformedPos.y, transformedPos.z);
+            }
+
+            posAttr.needsUpdate = true;
+            targetMesh.geometry.computeVertexNormals();
+        }
+
+        // --- HEATMAP & VISUAL TOGGLES ---
+        function toggleHeatmap(enabled) {
+            config.heatmapMode = enabled;
+            if (enabled) {
+                if (!isBoundToMesh) {
+                    alert("Execute 'Vincular Malha' primeiro!");
+                    document.getElementById('chkHeatmap').checked = false;
+                    config.heatmapMode = false;
+                    return;
+                }
+                updateHeatmapColors();
+            } else {
+                targetMesh.material = originalMaterial;
+            }
+        }
+
+        function updateHeatmapColors() {
+            if (!config.heatmapMode || !targetMesh || !isBoundToMesh) return;
+
+            const geometry = targetMesh.geometry;
+            const posAttr = geometry.attributes.position;
+            const vertexCount = posAttr.count;
+            const skinWeights = geometry.userData.skinWeights;
+
+            let colors = geometry.attributes.color;
+            if (!colors || colors.count !== vertexCount) {
+                colors = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
+                geometry.setAttribute('color', colors);
+            }
+
+            const color = new THREE.Color();
+
+            for (let i = 0; i < vertexCount; i++) {
+                let weight = 0;
+                if (selectedBone) {
+                    const match = skinWeights[i].find(w => w.bone === selectedBone);
+                    if (match) weight = match.weight;
+                }
+
+                if (weight === 0) {
+                    color.setHSL(0.66, 0.8, 0.15); // Blue
+                } else {
+                    const hue = (1.0 - weight) * 0.66; // Blue -> Red
+                    color.setHSL(hue, 1.0, 0.5);
+                }
+
+                colors.setXYZ(i, color.r, color.g, color.b);
+            }
+
+            colors.needsUpdate = true;
+
+            if (!heatmapMaterial) {
+                heatmapMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: config.wireframe });
+            }
+            targetMesh.material = heatmapMaterial;
+        }
+
+        function toggleWireframe(enabled) {
+            config.wireframe = enabled;
+            if (targetMesh) {
+                targetMesh.material.wireframe = enabled;
+            }
+        }
+
+        function toggleSkeletonOverlay(enabled) {
+            config.showSkeleton = enabled;
+            jointVisualsMap.forEach(mesh => mesh.visible = enabled);
+            boneCylindersGroup.visible = enabled;
+        }
+
+        function toggleRadiusHelpers(enabled) {
+            config.showRadius = enabled;
+            updateBoneWorldTransforms();
+        }
+
+        function setAppMode(mode) {
+            appMode = mode;
+
+            const editBtn = document.getElementById('modeEditBtn');
+            const poseBtn = document.getElementById('modePoseBtn');
+            const statusBadge = document.getElementById('modeStatusBadge');
+            const statusText = document.getElementById('modeStatusText');
+            const rigActions = document.getElementById('editRigActions');
+
+            if (mode === 'EDIT') {
+                editBtn.className = "flex items-center space-x-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all bg-blue-600 text-white shadow-md";
+                poseBtn.className = "flex items-center space-x-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all text-slate-400 hover:text-white";
+                statusBadge.className = "bg-slate-900/90 border border-blue-500/50 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-400 backdrop-blur shadow-lg flex items-center space-x-2";
+                statusText.innerText = "Modo Edição: Clique para Selecionar, Mover ou Adicionar Ossos";
+                rigActions.classList.remove('opacity-40', 'pointer-events-none');
+            } else {
+                poseBtn.className = "flex items-center space-x-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all bg-emerald-600 text-white shadow-md";
+                editBtn.className = "flex items-center space-x-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all text-slate-400 hover:text-white";
+                statusBadge.className = "bg-slate-900/90 border border-emerald-500/50 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-400 backdrop-blur shadow-lg flex items-center space-x-2";
+                statusText.innerText = "Modo Pose: Deforme a malha rotacionando ou movendo os ossos em tempo real";
+                rigActions.classList.add('opacity-40', 'pointer-events-none');
+
+                if (!isBoundToMesh) {
+                    bindSkinning();
+                }
+            }
+        }
+
+        function resetPose() {
+            skeletonBones.forEach(bone => {
+                bone.rotation.set(0, 0, 0);
+                bone.scale = 1.0;
+            });
+            selectBone(selectedBone);
+            updateBoneWorldTransforms();
+            updateStatus("Pose restaurada ao estado original.");
+        }
+
+        // --- HIERARCHY TREE UI ---
+        function rebuildHierarchyTree() {
+            const treeContainer = document.getElementById('hierarchyTree');
+            treeContainer.innerHTML = '';
+
+            document.getElementById('boneCountBadge').innerText = skeletonBones.length + ' ossos';
+
+            const roots = skeletonBones.filter(b => !b.parent);
+
+            function buildNodeUI(bone, depth) {
+                const item = document.createElement('div');
+                item.className = "flex items-center justify-between p-1.5 my-0.5 rounded-md text-xs cursor-pointer hover:bg-slate-800 transition text-slate-300";
+                item.style.paddingLeft = (depth * 14 + 8) + 'px';
+                item.dataset.boneId = bone.id;
+
+                item.innerHTML = `
+                    <div class="flex items-center space-x-2 truncate">
+                        <i class="fa-solid fa-bone ${depth === 0 ? 'text-blue-400' : 'text-slate-400'} text-[10px]"></i>
+                        <span class="truncate font-medium">${bone.name}</span>
+                    </div>
+                `;
+
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectBone(bone);
+                });
+
+                treeContainer.appendChild(item);
+
+                bone.children.forEach(child => buildNodeUI(child, depth + 1));
+            }
+
+            roots.forEach(root => buildNodeUI(root, 0));
+            highlightHierarchyTreeItem();
+        }
+
+        function highlightHierarchyTreeItem() {
+            const items = document.querySelectorAll('#hierarchyTree > div');
+            items.forEach(el => {
+                if (selectedBone && el.dataset.boneId === selectedBone.id) {
+                    el.classList.add('tree-item-selected');
+                } else {
+                    el.classList.remove('tree-item-selected');
+                }
+            });
+        }
+
+        function updateStatus(msg) {
+            document.getElementById('bindingStatus').innerHTML = `<i class="fa-solid fa-circle-check mr-1"></i> ${msg}`;
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('canvasContainer');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = function () {
+            initApp();
+        };
+    </script>
+</body>
+</html>
